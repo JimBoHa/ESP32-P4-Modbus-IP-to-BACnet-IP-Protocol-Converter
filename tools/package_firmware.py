@@ -68,7 +68,8 @@ def main():
         archive.writestr('source/SOURCE_COMMIT.txt',source+'\n')
     manifest={
         'project':project['project_name'],'version':project['project_version'],
-        'idf_version':project.get('idf_ver'),'target':'esp32p4',
+        'idf_version':subprocess.check_output(['git','describe','--tags','--always'],cwd=idf,text=True).strip(),
+        'target':'esp32p4',
         'board':'Waveshare ESP32-P4-POE-ETH, 32 MB flash',
         'source_commit':source,'tracked_source_dirty':dirty,
         'flash_offset':'0x0','image':'initial-flash.bin',
