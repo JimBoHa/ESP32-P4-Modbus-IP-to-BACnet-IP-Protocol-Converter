@@ -51,7 +51,7 @@ def generate():
     fields = ['instance', 'bacnet_type', 'name', 'wire_offset', 'register_count', 'bits',
               'encoding', 'scale', 'bacnet_units', 'units', 'period_ms', 'stale_ms',
               'states', 'native_access', 'gateway_access', 'description']
-    writer = csv.DictWriter(table, fieldnames=fields)
+    writer = csv.DictWriter(table, fieldnames=fields, lineterminator='\n')
     writer.writeheader()
     for p in points:
         block = next(b for b in blocks if b['offset'] <= p['offset'] and p['offset']+p['word_count'] <= b['offset']+b['count'])

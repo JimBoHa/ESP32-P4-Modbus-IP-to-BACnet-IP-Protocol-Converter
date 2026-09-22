@@ -6,6 +6,7 @@ import json
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 
@@ -54,6 +55,17 @@ def main():
         shutil.copy2(src,output)
     source=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
     dirty=bool(subprocess.check_output(['git','status','--porcelain','--untracked-files=no'],cwd=root,text=True).strip())
+    if dirty:
+        raise SystemExit('Commit the reviewed source before making a delivery package')
+    with zipfile.ZipFile(dest/'source.zip','w',zipfile.ZIP_DEFLATED) as archive:
+        tracked=subprocess.check_output(['git','ls-files','-z'],cwd=root).decode().split('\0')
+        for rel in tracked:
+            if rel and (root/rel).is_file(): archive.write(root/rel,'source/'+rel)
+        sub=root/'third_party'/'bacnet-stack'
+        tracked=subprocess.check_output(['git','ls-files','-z'],cwd=sub).decode().split('\0')
+        for rel in tracked:
+            if rel and (sub/rel).is_file(): archive.write(sub/rel,'source/third_party/bacnet-stack/'+rel)
+        archive.writestr('source/SOURCE_COMMIT.txt',source+'\n')
     manifest={
         'project':project['project_name'],'version':project['project_version'],
         'idf_version':project.get('idf_ver'),'target':'esp32p4',
