@@ -1,4 +1,4 @@
-# ESP32-P4 MPAC 1500 Modbus-to-BACnet gateway
+# ESP32-P4 Modbus IP to BACnet IP Protocol Converter
 
 Version **0.1.0** reads a Kohler **MPAC 1500 using the older Section 13 register
 map** and publishes its data as read-only BACnet/IP objects. The gateway runs on
@@ -71,8 +71,14 @@ implemented.
 ## Build and configuration
 
 Use **ESP-IDF v5.5.4**, target `esp32p4`, and the bundled BACnet Stack **1.6.0**.
-For a fresh Git checkout, initialize its pinned stack submodule with
-`git submodule update --init --recursive`.
+Clone the source and its pinned BACnet dependency:
+
+```sh
+git clone --recurse-submodules https://github.com/JimBoHa/ESP32-P4-Modbus-IP-to-BACnet-IP-Protocol-Converter.git
+cd ESP32-P4-Modbus-IP-to-BACnet-IP-Protocol-Converter
+```
+
+For an existing checkout, run `git submodule update --init --recursive`.
 The source defaults use DHCP and the documentation-only Modbus address
 `192.0.2.81`; replace the ATS address for deployment. Unit **41** is the protocol
 setup default and must match the controller.
