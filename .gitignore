@@ -1,0 +1,13 @@
+build*/
+sdkconfig
+sdkconfig.old
+sdkconfig.site*
+.venv*/
+__pycache__/
+private/
+release/
+*.bin
+*.elf
+*.map
+.DS_Store
+*.log

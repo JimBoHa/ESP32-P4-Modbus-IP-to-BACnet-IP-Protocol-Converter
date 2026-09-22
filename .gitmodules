@@ -1,0 +1,3 @@
+[submodule "third_party/bacnet-stack"]
+	path = third_party/bacnet-stack
+	url = https://github.com/bacnet-stack/bacnet-stack.git

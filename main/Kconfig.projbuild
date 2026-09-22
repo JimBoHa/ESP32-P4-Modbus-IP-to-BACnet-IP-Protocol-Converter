@@ -1,0 +1,57 @@
+menu "ATS Modbus to BACnet gateway"
+    config GW_MODBUS_HOST
+        string "ATS Modbus IPv4 address"
+        default "192.0.2.81"
+    config GW_MODBUS_PORT
+        int "ATS Modbus TCP port"
+        range 1 65535
+        default 502
+    config GW_MODBUS_UNIT
+        int "ATS Modbus unit ID"
+        range 1 247
+        default 41
+    config GW_EXPECTED_FIRMWARE
+        int "Expected old MPAC 1500 firmware word (2.03 = 515)"
+        range 0 65535
+        default 515
+    config GW_EXPECTED_MAC_FRAGMENT
+        int "Expected low 15 MAC bits (0 disables this extra check)"
+        range 0 32767
+        default 0
+    config GW_DEVICE_INSTANCE
+        int "Unique BACnet device instance"
+        range 0 4194302
+        default 75181
+    config GW_DEVICE_NAME
+        string "BACnet device name"
+        default "Kohler-MPAC1500-Gateway"
+    config GW_BACNET_PORT
+        int "BACnet UDP port"
+        range 1 65535
+        default 47808
+    config GW_VENDOR_ID
+        int "BACnet vendor identifier"
+        range 0 65535
+        default 260
+        help
+            260 identifies the BACnet Stack at SourceForge implementation.
+            Use your assigned vendor identifier for a distributed product.
+    config GW_IAM_PEER1
+        string "Optional additional unicast I-Am recipient IPv4"
+        default ""
+    config GW_IAM_PEER2
+        string "Optional second unicast I-Am recipient IPv4"
+        default ""
+    config GW_HOSTNAME
+        string "DHCP hostname"
+        default "kohler-ats-gateway"
+    config GW_STATIC_IP
+        string "Static IPv4 address (empty enables DHCP)"
+        default ""
+    config GW_NETMASK
+        string "Static IPv4 netmask"
+        default "255.255.255.0"
+    config GW_ROUTER
+        string "Static IPv4 default gateway"
+        default "0.0.0.0"
+endmenu
