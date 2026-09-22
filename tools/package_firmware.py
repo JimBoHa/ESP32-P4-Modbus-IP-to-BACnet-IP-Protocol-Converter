@@ -61,10 +61,11 @@ def main():
         tracked=subprocess.check_output(['git','ls-files','-z'],cwd=root).decode().split('\0')
         for rel in tracked:
             if rel and (root/rel).is_file(): archive.write(root/rel,'source/'+rel)
-        sub=root/'third_party'/'bacnet-stack'
-        tracked=subprocess.check_output(['git','ls-files','-z'],cwd=sub).decode().split('\0')
-        for rel in tracked:
-            if rel and (sub/rel).is_file(): archive.write(sub/rel,'source/third_party/bacnet-stack/'+rel)
+        for dependency in ['bacnet-stack', 'cJSON']:
+            sub=root/'third_party'/dependency
+            tracked=subprocess.check_output(['git','ls-files','-z'],cwd=sub).decode().split('\0')
+            for rel in tracked:
+                if rel and (sub/rel).is_file(): archive.write(sub/rel,'source/third_party/'+dependency+'/'+rel)
         archive.writestr('source/SOURCE_COMMIT.txt',source+'\n')
     manifest={
         'project':project['project_name'],'version':project['project_version'],
@@ -106,8 +107,12 @@ Ethernet uses DHCP. Read the assigned address from the USB log or DHCP
 lease named kohler-ats-gateway. BACnet device instance is 75181, UDP47808.
 Refresh Metasys device and field-point discovery for that instance.
 
-Public read-only diagnostics: /api/status and /api/points on HTTP port80.
-The source README and docs describe qualified/unavailable measurements.
+Open http://GATEWAY_IP/ to choose the device profile, change the Modbus target
+and BACnet identity, or upload a CSV map. Saving restarts the gateway. Saved
+settings persist and override build defaults. The merged image includes the
+v0.2.0 partition table, required for the new gateway_cfg NVS partition.
+Read-only diagnostics: /api/status and /api/points on HTTP port80.
+The source README and docs describe setup and qualified/unavailable measurements.
 ''')
     checks=[]
     for item in sorted(dest.rglob('*')):

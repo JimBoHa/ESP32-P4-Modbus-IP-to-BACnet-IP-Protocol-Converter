@@ -8,6 +8,7 @@
 #include <string.h>
 #include "bacnet/bacapp.h"
 #include "bacnet/bacdcode.h"
+#include "bacnet/bacerror.h"
 #include "bacnet/cov.h"
 #include "bacnet/npdu.h"
 #include "bacnet/rp.h"
@@ -103,14 +104,19 @@ static unsigned first_type(BACNET_OBJECT_TYPE type)
 
 static void tick(void) { gateway_bacnet_tick(++clock_ms); }
 
-static void subscribe(unsigned catalog, uint32_t process, bool confirmed, uint32_t lifetime, bool cancel)
+static void subscribe_point(const ats_point_def_t *point, uint32_t process, bool confirmed, uint32_t lifetime, bool cancel)
 {
     BACNET_SUBSCRIBE_COV_DATA data = {.subscriberProcessIdentifier=process,
-        .monitoredObjectIdentifier={ats_points[catalog].object_type, ats_points[catalog].instance},
+        .monitoredObjectIdentifier={point->object_type, point->instance},
         .issueConfirmedNotifications=confirmed, .lifetime=lifetime, .cancellationRequest=cancel};
     uint8_t apdu[MAX_APDU];
     int length = cov_subscribe_encode_apdu(apdu, sizeof(apdu), invoke++, &data);
     inject(apdu, (unsigned)length, false);
+}
+
+static void subscribe(unsigned catalog, uint32_t process, bool confirmed, uint32_t lifetime, bool cancel)
+{
+    subscribe_point(&ats_points[catalog], process, confirmed, lifetime, cancel);
 }
 
 static bool is_cov(unsigned frame, bool confirmed)
@@ -365,6 +371,235 @@ static void test_timeout_recovery_and_link(void)
     puts("recovery: confirmed timeout schedules fresh current value; link recovery announces passed");
 }
 
+static void read_missing(BACNET_OBJECT_TYPE type, uint32_t instance)
+{
+    uint8_t apdu[MAX_APDU], *reply;
+    BACNET_READ_PROPERTY_DATA request = {.object_type=type, .object_instance=instance,
+        .object_property=PROP_PRESENT_VALUE, .array_index=BACNET_ARRAY_ALL};
+    int length = rp_encode_apdu(apdu, invoke++, &request);
+    unsigned before = frame_count;
+    inject(apdu, (unsigned)length, false);
+    assert(frame_count == before + 1);
+    length = apdu_of(before, &reply);
+    assert(reply[0] == PDU_TYPE_ERROR);
+    BACNET_ERROR_CLASS error_class; BACNET_ERROR_CODE error_code;
+    assert(bacerror_decode_error_class_and_code(reply + 3, length - 3, &error_class, &error_code) > 0);
+    assert(error_class == ERROR_CLASS_OBJECT && error_code == ERROR_CODE_UNKNOWN_OBJECT);
+}
+
+static const char *const dynamic_states[] = {"Stopped", "Starting", "Running"};
+static const ats_point_def_t dynamic_points[] = {
+    {.object_type=OBJECT_ANALOG_INPUT, .instance=424242, .name="Custom-voltage", .units=UNITS_VOLTS},
+    {.object_type=OBJECT_BINARY_INPUT, .instance=7, .name="Custom-running", .description="Running contact"},
+    {.object_type=OBJECT_MULTI_STATE_INPUT, .instance=0, .name="Custom-mode",
+        .state_count=3, .state_text=dynamic_states},
+    {.object_type=OBJECT_CHARACTERSTRING_VALUE, .instance=7, .name="Custom-status"}
+};
+
+static void test_dynamic_catalog(gateway_bacnet_config_t settings)
+{
+    frame_count = 0;
+    settings.points = dynamic_points; settings.point_count = 4;
+    settings.model_name = "Generic TCP converter";
+    settings.description = "Custom uploaded map"; settings.database_revision = 42;
+    assert(gateway_bacnet_init(&settings, ++clock_ms));
+    assert(frame_count == 1); /* I-Am for the replacement database. */
+    BACNET_APPLICATION_DATA_VALUE value = read_value(OBJECT_DEVICE, settings.device_instance, PROP_DATABASE_REVISION, BACNET_ARRAY_ALL);
+    assert(value.type.Unsigned_Int == 42);
+    value = read_value(OBJECT_DEVICE, settings.device_instance, PROP_OBJECT_LIST, 0);
+    assert(value.type.Unsigned_Int == 12);
+    value = read_value(OBJECT_ANALOG_INPUT, 9004, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Real == 4);
+    bool seen[4] = {false};
+    for (unsigned n = 1; n <= 12; ++n) {
+        value = read_value(OBJECT_DEVICE, settings.device_instance, PROP_OBJECT_LIST, n);
+        for (unsigned i = 0; i < 4; ++i) {
+            if (value.type.Object_Id.type == dynamic_points[i].object_type && value.type.Object_Id.instance == dynamic_points[i].instance) {
+                assert(!seen[i]); seen[i] = true;
+            }
+        }
+    }
+    for (unsigned i = 0; i < 4; ++i) {
+        assert(seen[i]);
+        value = read_value(dynamic_points[i].object_type, dynamic_points[i].instance, PROP_RELIABILITY, BACNET_ARRAY_ALL);
+        assert(value.type.Enumerated == RELIABILITY_COMMUNICATION_FAILURE);
+    }
+    read_missing(ats_points[0].object_type, ats_points[0].instance);
+    value = read_value(OBJECT_MULTI_STATE_INPUT, 0, PROP_STATE_TEXT, 3);
+    BACNET_CHARACTER_STRING expected;
+    characterstring_init_ansi(&expected, "Running");
+    assert(characterstring_same(&value.type.Character_String, &expected));
+    ats_value_t custom[4] = {{.numeric=489.5, .quality=ATS_QUALITY_GOOD},
+        {.numeric=1, .quality=ATS_QUALITY_GOOD}, {.numeric=3, .quality=ATS_QUALITY_GOOD},
+        {.text="Online", .quality=ATS_QUALITY_GOOD}};
+    gateway_bacnet_update(custom);
+    value = read_value(OBJECT_ANALOG_INPUT, 424242, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Real == 489.5f);
+    value = read_value(OBJECT_BINARY_INPUT, 7, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Enumerated == BINARY_ACTIVE);
+    value = read_value(OBJECT_MULTI_STATE_INPUT, 0, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Unsigned_Int == 3);
+    value = read_value(OBJECT_CHARACTERSTRING_VALUE, 7, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    characterstring_init_ansi(&expected, "Online");
+    assert(characterstring_same(&value.type.Character_String, &expected));
+    value = read_value(OBJECT_BINARY_INPUT, 9001, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Enumerated == BINARY_ACTIVE);
+    for (unsigned i = 0; i < 4; ++i) { subscribe_point(&dynamic_points[i], 200 + i, true, 60, false); }
+    unsigned before = frame_count; tick();
+    unsigned notifications = 0;
+    for (unsigned n = before; n < frame_count; ++n) {
+        if (!is_cov(n, true)) { continue; }
+        BACNET_PROPERTY_VALUE props[2]; BACNET_COV_DATA cov = decode_cov(n, true, props);
+        unsigned index = cov.subscriberProcessIdentifier - 200;
+        assert(index < 4 && cov.monitoredObjectIdentifier.type == dynamic_points[index].object_type &&
+            cov.monitoredObjectIdentifier.instance == dynamic_points[index].instance);
+        assert(!bitstring_bit(&props[1].value.type.Bit_String, STATUS_FLAG_FAULT));
+        notifications++; ack(n);
+    }
+    assert(notifications == 4);
+    for (unsigned i = 0; i < 4; ++i) { custom[i].quality = ATS_QUALITY_COMM; }
+    gateway_bacnet_update(custom); before = frame_count; tick(); notifications = 0;
+    for (unsigned n = before; n < frame_count; ++n) {
+        if (!is_cov(n, true)) { continue; }
+        BACNET_PROPERTY_VALUE props[2]; BACNET_COV_DATA cov = decode_cov(n, true, props);
+        assert(bitstring_bit(&props[1].value.type.Bit_String, STATUS_FLAG_FAULT));
+        if (cov.monitoredObjectIdentifier.type == OBJECT_CHARACTERSTRING_VALUE) {
+            assert(characterstring_same(&props[0].value.type.Character_String, &expected));
+        }
+        notifications++; ack(n);
+    }
+    assert(notifications == 4);
+    for (unsigned i = 0; i < 4; ++i) {
+        value = read_value(dynamic_points[i].object_type, dynamic_points[i].instance, PROP_RELIABILITY, BACNET_ARRAY_ALL);
+        assert(value.type.Enumerated == RELIABILITY_COMMUNICATION_FAILURE);
+        value = read_value(dynamic_points[i].object_type, dynamic_points[i].instance, PROP_STATUS_FLAGS, BACNET_ARRAY_ALL);
+        assert(bitstring_bit(&value.type.Bit_String, STATUS_FLAG_FAULT));
+    }
+    value = read_value(OBJECT_BINARY_INPUT, 9001, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Enumerated == BINARY_INACTIVE);
+    gateway_bacnet_stats_t status; gateway_bacnet_stats(&status);
+    assert(status.good_points == 0 && status.fault_points == 4);
+    for (unsigned i = 0; i < 4; ++i) { custom[i].quality = ATS_QUALITY_GOOD; }
+    gateway_bacnet_update(custom); before = frame_count; tick();
+    assert(frame_count == before + 4); /* Intentionally leave confirmed COV unacknowledged. */
+    gateway_bacnet_shutdown();
+    gateway_bacnet_stats(&status);
+    assert(!status.initialized && !status.received_packets && !status.cov_pending);
+    ats_point_def_t replacement = {.object_type=OBJECT_ANALOG_INPUT, .instance=88, .name="Replacement"};
+    settings.points = &replacement; settings.point_count = 1; settings.database_revision = 43;
+    assert(gateway_bacnet_init(&settings, ++clock_ms));
+    value = read_value(OBJECT_DEVICE, settings.device_instance, PROP_OBJECT_LIST, 0);
+    assert(value.type.Unsigned_Int == 9);
+    value = read_value(OBJECT_DEVICE, settings.device_instance, PROP_DATABASE_REVISION, BACNET_ARRAY_ALL);
+    assert(value.type.Unsigned_Int == 43);
+    for (unsigned i = 0; i < 4; ++i) { read_missing(dynamic_points[i].object_type, dynamic_points[i].instance); }
+    value = read_value(OBJECT_ANALOG_INPUT, 88, PROP_RELIABILITY, BACNET_ARRAY_ALL);
+    assert(value.type.Enumerated == RELIABILITY_COMMUNICATION_FAILURE);
+    before = frame_count; tick();
+    assert(frame_count == before); /* Old subscriptions were cleared. */
+    clock_ms += 15000; gateway_bacnet_tick(clock_ms);
+    assert(frame_count == before); /* No retry of old unacknowledged COV transactions. */
+    gateway_bacnet_shutdown();
+    settings.points = NULL; settings.point_count = 0; settings.database_revision = 0;
+    assert(gateway_bacnet_init(&settings, ++clock_ms));
+    value = read_value(OBJECT_DEVICE, settings.device_instance, PROP_OBJECT_LIST, 0);
+    assert(value.type.Unsigned_Int == 172);
+    read_missing(OBJECT_ANALOG_INPUT, 88);
+    gateway_bacnet_shutdown();
+    puts("dynamic: arbitrary AI/BI/MSI/CSV identifiers, object list, values, quality COV, database revision and clean reinit passed");
+}
+
+static void test_catalog_validation(gateway_bacnet_config_t settings)
+{
+    ats_point_def_t points[4];
+    memcpy(points, dynamic_points, sizeof(points));
+    settings.points = points; settings.point_count = 4;
+    points[1].name = points[0].name;
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[1] = points[0]; points[1].name = "Different-name";
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[1] = dynamic_points[1];
+    for (uint32_t reserved = 9001; reserved <= 9004; ++reserved) {
+        points[1].instance = reserved; assert(!gateway_bacnet_init(&settings, clock_ms));
+    }
+    points[1] = dynamic_points[1]; points[1].name = "Gateway-Custom";
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[1].name = settings.device_name;
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[1] = dynamic_points[1]; points[1].object_type = OBJECT_ANALOG_OUTPUT;
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[1] = dynamic_points[1]; points[1].instance = BACNET_MAX_INSTANCE;
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[1] = dynamic_points[1];
+    char long_name[GATEWAY_BACNET_POINT_NAME_MAX + 2];
+    memset(long_name, 'x', sizeof(long_name)); long_name[sizeof(long_name)-1] = 0;
+    points[1].name = long_name; assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[1].name = ""; assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[1] = dynamic_points[1];
+    const char *bad_states[] = {"Stopped", "", "Running"};
+    points[2].state_text = bad_states; assert(!gateway_bacnet_init(&settings, clock_ms));
+    bad_states[1] = "Stopped"; assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[2] = dynamic_points[2]; points[2].state_count = 0;
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    points[2] = dynamic_points[2];
+    settings.point_count = GATEWAY_BACNET_MAX_POINTS + 1;
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    settings.point_count = 0; assert(!gateway_bacnet_init(&settings, clock_ms));
+    settings.points = NULL; settings.point_count = 4;
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    settings.points = points;
+    const char *name = settings.device_name;
+    settings.device_name = "Gateway-Ethernet";
+    assert(!gateway_bacnet_init(&settings, clock_ms));
+    settings.device_name = name;
+    assert(gateway_bacnet_init(&settings, ++clock_ms)); /* Invalid attempts changed nothing. */
+    gateway_bacnet_shutdown();
+    puts("catalog: rejects duplicates, reserved names/IDs, unsupported types, long/empty names, invalid MSI lists and inconsistent sizes passed");
+}
+
+static void test_ats_subset_health(gateway_bacnet_config_t settings)
+{
+    settings.points = ats_points; settings.point_count = 24;
+    assert(gateway_bacnet_init(&settings, ++clock_ms));
+    ats_value_t samples[24] = {0};
+    for (unsigned i = 0; i < 24; ++i) { samples[i].quality = ATS_QUALITY_COMM; }
+    samples[0].numeric = 0; samples[0].quality = ATS_QUALITY_GOOD;
+    gateway_bacnet_update(samples);
+    BACNET_APPLICATION_DATA_VALUE value = read_value(OBJECT_BINARY_INPUT, 9001, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Enumerated == BINARY_ACTIVE);
+    value = read_value(OBJECT_ANALOG_INPUT, 9004, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Real == 23);
+    samples[0].quality = ATS_QUALITY_COMM;
+    gateway_bacnet_update(samples);
+    value = read_value(OBJECT_BINARY_INPUT, 9001, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Enumerated == BINARY_INACTIVE);
+    gateway_bacnet_shutdown();
+    puts("preset: ATS electrical subset retains core-point health semantics passed");
+}
+
+static void test_maximum_catalog(gateway_bacnet_config_t settings)
+{
+    ats_point_def_t points[GATEWAY_BACNET_MAX_POINTS] = {0};
+    char names[GATEWAY_BACNET_MAX_POINTS][24];
+    ats_value_t samples[GATEWAY_BACNET_MAX_POINTS] = {0};
+    for (unsigned i = 0; i < GATEWAY_BACNET_MAX_POINTS; ++i) {
+        snprintf(names[i], sizeof(names[i]), "Dynamic-%u", i);
+        points[i] = (ats_point_def_t){.object_type=OBJECT_ANALOG_INPUT, .instance=20000 + i, .name=names[i]};
+        samples[i].numeric = i + 0.5; samples[i].quality = ATS_QUALITY_GOOD;
+    }
+    frame_count = 0; settings.points = points; settings.point_count = GATEWAY_BACNET_MAX_POINTS;
+    assert(gateway_bacnet_init(&settings, ++clock_ms));
+    gateway_bacnet_update(samples);
+    BACNET_APPLICATION_DATA_VALUE value = read_value(OBJECT_DEVICE, settings.device_instance, PROP_OBJECT_LIST, 0);
+    assert(value.type.Unsigned_Int == GATEWAY_BACNET_MAX_POINTS + 8);
+    value = read_value(OBJECT_ANALOG_INPUT, 20000 + GATEWAY_BACNET_MAX_POINTS - 1, PROP_PRESENT_VALUE, BACNET_ARRAY_ALL);
+    assert(value.type.Real == GATEWAY_BACNET_MAX_POINTS - 0.5f);
+    gateway_bacnet_stats_t status; gateway_bacnet_stats(&status);
+    assert(status.good_points == GATEWAY_BACNET_MAX_POINTS && status.fault_points == 0);
+    gateway_bacnet_shutdown();
+    puts("capacity: 256-point uploaded catalog, final row value and exact diagnostic totals passed");
+}
+
 int main(void)
 {
     client_ip = inet_addr("127.0.0.2");
@@ -377,6 +612,7 @@ int main(void)
     test_writes_rejected_and_rpm(); test_unqualified_information(); test_cov_capacity_queue_expiration();
     test_timeout_recovery_and_link();
     gateway_bacnet_shutdown();
+    test_catalog_validation(settings); test_dynamic_catalog(settings); test_ats_subset_health(settings); test_maximum_catalog(settings);
     puts("BACnet native production-service tests passed; no network IO");
     return 0;
 }

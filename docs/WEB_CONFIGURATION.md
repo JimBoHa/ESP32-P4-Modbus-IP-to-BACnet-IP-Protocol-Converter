@@ -1,0 +1,101 @@
+# Configure the gateway in a browser
+
+Open the gateway’s IPv4 address in a browser. The console is self-contained: it
+uses no external scripts, fonts, analytics, or CDN. Overview and Live points
+refresh every five seconds. A lost connection leaves the last received values
+visible, marks updates paused, and retries with a bounded delay. The point’s
+reported quality and reason remain visible separately from browser connectivity.
+
+The Configuration tab loads the saved settings once. Background polling does
+not overwrite unsaved edits. “Discard changes” restores the loaded settings.
+
+## Profiles and connections
+
+- **MPAC1500 full:** the supported older Section 13 automatic transfer switch
+  register map.
+- **MPAC1500 electrical:** 24 status/electrical points using the same controller
+  decoder and identity checks. Both presets retain all ATS polling and identity
+  checks; this preset reduces only the points published to BACnet.
+- **Custom:** a validated CSV map, with up to 128 points and a 32 KiB file limit.
+
+The built-in profiles describe a Kohler MPAC1500 **ATS**, not a generator
+engine controller. Set the Modbus source’s IPv4 address, TCP port, and unit ID.
+The Modbus address belongs to the source device, not the gateway itself.
+TCP port must be 1–65535; unit ID may be 0–255 for Modbus TCP gateways.
+
+For built-in profiles, enter the expected raw firmware word and optional low
+15-bit MAC fragment in decimal. Firmware 2.03 is word 515 (`0x0203`). A MAC
+fragment of zero disables that extra identity comparison. These fields must
+describe the intended controller; changing them does not qualify a different
+controller or register map.
+
+Set the BACnet device name, a device instance unique on the BACnet network,
+and the UDP port (normally 47808). The device name accepts 1–95 printable
+ASCII characters and cannot begin with the reserved prefix `Gateway-`.
+
+## Custom CSV workflow
+
+1. Select Custom and download the template from the console.
+2. Edit the CSV using zero-based Modbus wire addresses and the source device’s
+   documented data types, byte order, scaling, and units.
+3. Choose the CSV file. The browser submits it to `/api/validate`; this has no
+   configuration effect.
+4. Resolve validation errors and review the returned point-name/type/instance
+   preview.
+5. Click **Save and restart** to store the settings and validated CSV.
+
+The exact header is:
+
+```csv
+instance,name,object_type,function,address,data_type,byte_order,scale,offset,units,bit,states,length,poll_ms,description
+```
+
+Supported object types are AI, BI, MSI, and CSV. Functions 1, 2, 3, and 4 are
+read operations. Data types are `u16`, `s16`, `u32`, `s32`, `f32`, `bit`,
+`ascii`, and `bool`. Byte order is `AB`/`BA` for 16-bit and ASCII data,
+`ABCD`/`BADC`/`CDAB`/`DCBA` for 32-bit data, and empty for `bool`.
+MSI labels are separated by `|` (up to 16 states), with at most 63 characters
+per label and 512 characters for the combined field. Point names accept up to
+63 characters and descriptions up to 127; every CSV field is limited to 512
+characters. ASCII length is at most 20 characters. Poll intervals range from
+1,000 to 3,600,000 milliseconds. The stale limit in milliseconds is
+`max(3 × poll_ms, 3 × point_count × 250 + 1200, 5000)`.
+The gateway validates compatible combinations and numeric limits.
+
+The Saved map link downloads the stored CSV. Saving other settings without
+uploading a new file preserves an existing custom map. Selecting “Keep saved
+map” discards only the browser’s pending replacement.
+
+## Save and reconnect
+
+Saving validates the entire configuration, stores it, and restarts the
+gateway. The browser waits for the revised configuration and then resumes
+status polling. If the connection closes before the save response arrives,
+reload the page to inspect stored settings before submitting again.
+
+After changing profiles or a point map, refresh BACnet device and point
+discovery in Metasys. Removed or changed point identifiers may require BAS
+mapping changes. A browser preview does not prove Modbus communication,
+physical equipment readings, or Metasys import.
+
+All configuration mutations use JSON with `X-Gateway-Request: 1`. The header is
+a request-boundary check, not a login credential. The page renders API and CSV
+strings as text; it does not execute embedded HTML.
+
+## Browser verification
+
+`tests/test_web_ui.mjs` serves the real embedded HTML on loopback with mocked
+API responses and exercises the configuration workflow in headless Chromium.
+Install Playwright and its Chromium browser, then run:
+
+```sh
+npm install --no-save playwright
+npx playwright install chromium
+node tests/test_web_ui.mjs /tmp/esp32-p4-web-ui
+```
+
+An existing install can be selected with `PLAYWRIGHT_MODULE` (absolute path to
+Playwright’s `index.mjs`) and `CHROMIUM_EXECUTABLE` (optional browser executable).
+The test writes desktop/mobile screenshots and a JSON report. It uses loopback
+only and verifies UI behavior; native backend tests validate the production
+configuration parser and storage, and hardware commissioning remains separate.

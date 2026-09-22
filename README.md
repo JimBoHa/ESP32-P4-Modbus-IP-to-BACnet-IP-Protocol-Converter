@@ -1,18 +1,25 @@
 # ESP32-P4 Modbus IP to BACnet IP Protocol Converter
 
-Version **0.1.0** reads a Kohler **MPAC 1500 using the older Section 13 register
-map** and publishes its data as read-only BACnet/IP objects. The gateway runs on
-the **Waveshare ESP32-P4-POE-ETH**, the board identified by
-[Amazon ASIN B0FN4FX21T](https://www.amazon.com/dp/B0FN4FX21T). Waveshare lists this
-model in its [ESP32-P4-ETH documentation](https://docs.waveshare.com/ESP32-P4-ETH),
-with 32 MB NOR flash, 32 MB PSRAM, and 100 Mbps Ethernet.
+Version **0.2.0** converts read-only Modbus TCP points into discoverable
+BACnet/IP objects on the **Waveshare ESP32-P4-POE-ETH**. Its web interface lets
+you select a built-in Kohler MPAC 1500 ATS profile or upload your own CSV point
+map, set the Modbus target and BACnet identity, and save the configuration to
+flash. Saving restarts the gateway to apply a complete new object list.
 
-The firmware builds for ESP32-P4 and its production protocol code has passed
-a native workstation test against the real ATS: 172 BACnet objects, 1,683
-property reads, COV, and local-path failure/recovery. It has **not yet been
-flashed or commissioned on the physical ESP32-P4**. Board detection, flash
-backup, P4 Ethernet operation, and actual Metasys discovery remain part of
-[commissioning](docs/COMMISSIONING.md). See [validation](docs/VALIDATION.md).
+Built-in profiles cover the **older Section 13 MPAC 1500 map**: all 164 points,
+or 24 status/electrical points. This is the transfer-switch controller found
+on the generator installation, not a generic generator engine register map.
+Custom CSV supports up to **128 points**, FC01/02/03/04, scaling, byte order,
+integer/float values, bits, states and text. See
+[web setup and CSV format](docs/WEB_CONFIGURATION.md) and download the
+[example CSV](main/web/template.csv).
+
+The board matches [Amazon ASIN B0FN4FX21T](https://www.amazon.com/dp/B0FN4FX21T).
+[Waveshare documentation](https://docs.waveshare.com/ESP32-P4-ETH) specifies
+32 MB flash/PSRAM and 100 Mbps Ethernet. The original ATS protocol path passed
+a workstation test against the real controller. New web/CSV behavior is tested
+locally; **physical ESP32-P4 flashing, Ethernet and Metasys commissioning remain
+pending**. See [validation](docs/VALIDATION.md) for the exact test scope.
 
 ## Connections
 
@@ -45,11 +52,11 @@ point counts, Modbus health, and Ethernet state. The default Device instance is
 **75181** and the Network Port instance is **1**. Choose a unique device instance
 for each gateway on the BACnet network.
 
-- The only Modbus function implemented is **FC03, Read Holding Registers**.
+- ATS presets use **FC03**. Custom maps support **FC01/02/03/04 reads**.
   Each connection/request has a 1,200 ms total deadline. Transactions are
   serialized with at least 250 ms after completion before the next request;
   failures trigger bounded backoff.
-- Identity checks must establish controller type 23, the commissioned firmware
+- For the ATS presets, identity checks establish controller type 23, the commissioned firmware
   word, and the old-map profile before the catalog is polled. Newer MPAC maps
   are rejected. Identity is checked again after communication loss and
   periodically during operation.
@@ -62,16 +69,21 @@ for each gateway on the BACnet network.
   settings whose native Modbus access is read/write. No transfer, exercise,
   reset, relay, or settings-write commands are implemented.
 
-HTTP provides JSON on port 80: `/api/status` reports gateway/profile health and
-`/api/points` reports the 164 points with values and quality reasons. `/` returns
-the status JSON. There is no graphical web interface or configuration page in
-this version. Configuration and updates use a source build and USB; OTA is not
-implemented.
+Open **http://GATEWAY_IP/** for profile selection, connection settings, CSV
+validation/upload and live point quality. `/api/status` and `/api/points`
+provide JSON. Settings and the uploaded CSV persist in a dedicated NVS flash
+partition. Rejected input leaves the active and saved configuration unchanged.
+Changing profiles or point identifiers requires refreshing field-point
+discovery in Metasys; removed objects may need removal from its cached list.
+
+Configuration HTTP has no login or TLS; anyone with access to port 80 can
+change the gateway settings. Use the intended management LAN. Field-device
+and BACnet point writes remain disabled. Firmware updates use USB; no OTA.
 
 ## Build and configuration
 
 Use **ESP-IDF v5.5.4**, target `esp32p4`, and the bundled BACnet Stack **1.6.0**.
-Clone the source and its pinned BACnet dependency:
+Clone the source and its pinned dependencies:
 
 ```sh
 git clone --recurse-submodules https://github.com/JimBoHa/ESP32-P4-Modbus-IP-to-BACnet-IP-Protocol-Converter.git
@@ -80,27 +92,28 @@ cd ESP32-P4-Modbus-IP-to-BACnet-IP-Protocol-Converter
 
 For an existing checkout, run `git submodule update --init --recursive`.
 The source defaults use DHCP and the documentation-only Modbus address
-`192.0.2.81`; replace the ATS address for deployment. Unit **41** is the protocol
-setup default and must match the controller.
+`192.0.2.81`; set the actual target through the web interface after flashing.
+Unit **41** is the protocol setup default and must match the controller.
 
-Create a private `sdkconfig.site` as shown in
+Optionally create a private `sdkconfig.site` for initial defaults as shown in
 [COMMISSIONING.md](docs/COMMISSIONING.md#configure-and-build-from-source), then:
 
 ```sh
 export IDF_PATH='/absolute/path/to/esp-idf-v5.5.4'
 . "$IDF_PATH/export.sh"
-export SDKCONFIG_DEFAULTS='sdkconfig.defaults;sdkconfig.site'
+export SDKCONFIG_DEFAULTS='sdkconfig.defaults' # add ;sdkconfig.site if created
 idf.py set-target esp32p4
 idf.py menuconfig
 idf.py build
 ```
 
-The **ATS Modbus to BACnet gateway** menu configures the ATS IPv4 address, port,
-unit, expected firmware, optional MAC fingerprint, BACnet identity/port,
-additional I-Am recipients, and DHCP/static addressing. `sdkconfig.site`, the
+The **ATS Modbus to BACnet gateway** menu seeds initial defaults for target,
+unit, expected firmware, optional MAC fingerprint and BACnet identity/port.
+It also sets additional I-Am recipients and DHCP/static addressing. `sdkconfig.site`, the
 generated `sdkconfig`, and build output are ignored by Git. Defaults seed new
 configurations; changing a defaults file does not overwrite an existing
-`sdkconfig`. Review the generated configuration before rebuilding.
+`sdkconfig`. Review the generated configuration before rebuilding. Saved web
+settings take precedence over these build defaults; reflashing the application preserves them.
 
 The current defaults select **pre-v3 ESP32-P4 silicon with minimum revision 1**.
 Read the actual chip revision before flashing. A rev0 or rev3 board requires an
@@ -108,9 +121,11 @@ appropriate rebuild; never bypass an incompatible-image check with `--force`.
 [Waveshare's revision guidance](https://docs.waveshare.com/ESP32-P4-ETH/FAQ)
 explains the separate build configurations.
 
-The initial private delivery folder is named `ESP32-P4-ATS-Gateway-v0.1.0`.
-Use its manifest, `SHA256SUMS`, and flashing instructions for that particular
-image. Its site configuration is separate from this reusable source tree.
+Version 0.2.0 adds a 256 KiB configuration partition at `0x410000`, after the
+unchanged factory application partition. When upgrading from 0.1.0, flash the
+**partition table and application** using `idf.py flash`; an app-only update
+cannot create this partition. No erase of the whole flash is required. The
+older private 0.1.0 package does not include the web/CSV features.
 
 ## Local verification
 
@@ -125,7 +140,7 @@ ctest --test-dir build-host --output-on-failure
 python3 -m unittest discover -s tests -p 'test_modbus_loopback.py' -v
 ```
 
-The loopback suite verifies complete FC03 request bytes, fragmented responses,
+The loopback suite verifies read-function request bytes, fragmented responses,
 invalid headers/PDUs, exception responses, early disconnects, connection refusal,
 and absolute deadlines under silent or slowly transmitting peers. Invalid
 responses cannot overwrite prior register values.

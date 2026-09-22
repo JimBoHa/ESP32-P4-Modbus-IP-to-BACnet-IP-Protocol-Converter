@@ -1,6 +1,6 @@
 # Source lineage and technical references
 
-This gateway is a separate **v0.1.0** project. The reference firmware projects
+This gateway is a separate **v0.2.0** project. The reference firmware projects
 provided hardware and BACnet implementation patterns; their working hardware
 history does not constitute validation of this new Modbus gateway.
 
@@ -13,7 +13,7 @@ history does not constitute validation of this new Modbus gateway.
 | [BACnet Stack 1.6.0](https://github.com/bacnet-stack/bacnet-stack/tree/9bc3cfa07aab98852de432fa24079f4b4b6b7eed) | `9bc3cfa07aab98852de432fa24079f4b4b6b7eed` | Vendored in `third_party/bacnet-stack`; selected sources are listed in `components/bacnet_stack/bacnet_sources.cmake`. Keep upstream license notices with the source. |
 | [Espressif ESP-IDF v5.5.4](https://github.com/espressif/esp-idf/tree/v5.5.4) | Tag `v5.5.4` | ESP32-P4 toolchain, Ethernet/lwIP, RTOS, USB console, HTTP, and platform runtime. |
 
-The new application supplies its own FC03-only TCP client, pinned ATS catalog,
+The new application supplies its own read-only FC01/02/03/04 TCP client, pinned ATS catalog,
 decoder, profile gate, polling schedule, and read-only object integration. The
 catalog source is [tools/ats_catalog.json](../tools/ats_catalog.json); generated
 outputs are [main/ats_map.inc](../main/ats_map.inc) and
@@ -45,7 +45,7 @@ outputs are [main/ats_map.inc](../main/ats_map.inc) and
   leading `4` register-area notation.
 - [Modbus TCP/IP Implementation Guide V1.0b](https://www.modbus.org/docs/Modbus_Messaging_Implementation_Guide_V1_0b.pdf)
   defines MBAP transaction/protocol/unit identifiers and TCP message framing.
-  The client validates those fields and the FC03 response before committing
+  The client validates those fields and the requested read-function response before committing
   received words.
 - [ESP-IDF v5.5.4 build-system guide](https://docs.espressif.com/projects/esp-idf/en/v5.5.4/esp32p4/api-guides/build-system.html)
   describes `SDKCONFIG_DEFAULTS`, precedence of generated configuration, and
@@ -56,6 +56,14 @@ outputs are [main/ats_map.inc](../main/ats_map.inc) and
   documents flash identification, flash backup, and image writing. Use the
   esptool environment supplied with the pinned IDF and the delivered image's
   manifest/flash arguments.
+
+- [ESP-IDF NVS storage](https://docs.espressif.com/projects/esp-idf/en/v5.5.4/esp32p4/api-reference/storage/nvs_flash.html)
+  documents named NVS partitions, blob storage and commit behavior used by the
+  web settings store.
+- [ESP-IDF HTTP server](https://docs.espressif.com/projects/esp-idf/en/v5.5.4/esp32p4/api-reference/protocols/esp_http_server.html)
+  documents request-body handling and response APIs.
+- [cJSON 1.7.19](https://github.com/DaveGamble/cJSON/tree/c859b25da02955fef659d658b8f324b5cde87be3)
+  is pinned for native configuration tests, matching ESP-IDF's component.
 
 ## Evidence boundaries
 

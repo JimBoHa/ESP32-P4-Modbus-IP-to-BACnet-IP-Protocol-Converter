@@ -26,15 +26,17 @@
 
 #define NETWORK_INSTANCE 1u
 #define DIAGNOSTIC_BASE 9001u
-#define RECOVERY_CAPACITY (ATS_POINT_COUNT + 8u)
+#define RECOVERY_CAPACITY (GATEWAY_BACNET_MAX_POINTS + 8u)
+#define STATE_TEXT_BYTES 1024u
 
 static gateway_bacnet_config_t config;
 static gateway_bacnet_stats_t stats;
-static char device_name[96], firmware_version[32], location[96];
+static char device_name[96], firmware_version[MAX_DEV_VER_LEN + 1], location[MAX_DEV_LOC_LEN + 1];
+static bool legacy_catalog;
 static uint64_t now_ms, started_ms, last_timer_ms, last_second_ms, next_announce_ms;
 static uint8_t receive_buffer[MAX_PDU], transmit_buffer[MAX_PDU];
-static BACNET_RELIABILITY csv_reliability[ATS_POINT_COUNT];
-static bool csv_quality_changed[ATS_POINT_COUNT];
+static BACNET_RELIABILITY csv_reliability[GATEWAY_BACNET_MAX_POINTS];
+static bool csv_quality_changed[GATEWAY_BACNET_MAX_POINTS];
 typedef struct { bool used; BACNET_OBJECT_TYPE type; uint32_t instance; uint64_t due; } recovery_t;
 static recovery_t recovery[RECOVERY_CAPACITY];
 static uint8_t failed_pdu[MAX_PDU];
@@ -43,8 +45,11 @@ unsigned long mstimer_now(void) { return (unsigned long)now_ms; }
 
 static int catalog_index(uint32_t instance)
 {
-    if (instance < 1001u || instance >= 1001u + ATS_POINT_COUNT) { return -1; }
-    return (int)(instance - 1001u);
+    for (size_t i = 0; i < config.point_count; ++i) {
+        if (config.points[i].object_type == OBJECT_CHARACTERSTRING_VALUE &&
+            config.points[i].instance == instance) { return (int)i; }
+    }
+    return -1;
 }
 
 static bool read_only(BACNET_WRITE_PROPERTY_DATA *data)
@@ -265,7 +270,7 @@ static bool create_point(const ats_point_def_t *point)
         case OBJECT_ANALOG_INPUT:
             if (Analog_Input_Create(id) != id) { return false; }
             Analog_Input_Name_Set(id, point->name);
-            Analog_Input_Description_Set(id, point->description);
+            Analog_Input_Description_Set(id, point->description ? point->description : "");
             Analog_Input_Units_Set(id, point->units);
             Analog_Input_COV_Increment_Set(id, point->units == UNITS_HERTZ ? 0.01f : 0.1f);
             Analog_Input_Reliability_Set(id, RELIABILITY_COMMUNICATION_FAILURE);
@@ -273,7 +278,7 @@ static bool create_point(const ats_point_def_t *point)
         case OBJECT_BINARY_INPUT:
             if (Binary_Input_Create(id) != id) { return false; }
             Binary_Input_Name_Set(id, point->name);
-            Binary_Input_Description_Set(id, point->description);
+            Binary_Input_Description_Set(id, point->description ? point->description : "");
             Binary_Input_Active_Text_Set(id, "Active");
             Binary_Input_Inactive_Text_Set(id, "Inactive");
             Binary_Input_Reliability_Set(id, RELIABILITY_COMMUNICATION_FAILURE);
@@ -281,9 +286,9 @@ static bool create_point(const ats_point_def_t *point)
         case OBJECT_MULTI_STATE_INPUT:
             if (Multistate_Input_Create(id) != id) { return false; }
             Multistate_Input_Name_Set(id, point->name);
-            Multistate_Input_Description_Set(id, point->description);
+            Multistate_Input_Description_Set(id, point->description ? point->description : "");
             {
-                char states[1024] = {0};
+                char states[STATE_TEXT_BYTES] = {0};
                 size_t used = 0;
                 if (!point->state_count || !point->state_text) { return false; }
                 for (uint32_t n = 0; n < point->state_count; ++n) {
@@ -299,7 +304,7 @@ static bool create_point(const ats_point_def_t *point)
         case OBJECT_CHARACTERSTRING_VALUE:
             if (CharacterString_Value_Create(id) != id) { return false; }
             CharacterString_Value_Name_Set(id, point->name);
-            CharacterString_Value_Description_Set(id, point->description);
+            CharacterString_Value_Description_Set(id, point->description ? point->description : "");
             break;
         default: return false;
     }
@@ -333,20 +338,69 @@ static void announce(void)
     next_announce_ms = now_ms + 60000;
 }
 
+/* Bounded validation runs before changing any live stack state. Names remain
+ * unique across Device, Network Port, diagnostics and all configured types. */
+static bool valid_string(const char *value, size_t maximum, bool nonempty)
+{
+    return value && (!nonempty || value[0]) && strnlen(value, maximum + 1) <= maximum;
+}
+
+static bool valid_catalog(const ats_point_def_t *points, size_t count, const char *name)
+{
+    if (!points || !count || count > GATEWAY_BACNET_MAX_POINTS) { return false; }
+    for (size_t i = 0; i < count; ++i) {
+        const ats_point_def_t *point = &points[i];
+        if ((point->object_type != OBJECT_ANALOG_INPUT && point->object_type != OBJECT_BINARY_INPUT &&
+             point->object_type != OBJECT_MULTI_STATE_INPUT && point->object_type != OBJECT_CHARACTERSTRING_VALUE) ||
+            point->instance >= BACNET_MAX_INSTANCE ||
+            (point->instance >= DIAGNOSTIC_BASE && point->instance < DIAGNOSTIC_BASE + 4) ||
+            !valid_string(point->name, GATEWAY_BACNET_POINT_NAME_MAX, true) ||
+            (point->description && !valid_string(point->description, GATEWAY_BACNET_POINT_DESCRIPTION_MAX, false)) ||
+            !strncmp(point->name, "Gateway-", 8) || !strcmp(point->name, name)) { return false; }
+        for (size_t n = 0; n < i; ++n) {
+            if (!strcmp(point->name, points[n].name) ||
+                (point->object_type == points[n].object_type && point->instance == points[n].instance)) { return false; }
+        }
+        if (point->object_type == OBJECT_MULTI_STATE_INPUT) {
+            if (!point->state_count || point->state_count > GATEWAY_BACNET_MAX_STATES || !point->state_text) { return false; }
+            size_t bytes = 1; /* Final NUL terminates the state-name list. */
+            for (size_t n = 0; n < point->state_count; ++n) {
+                if (!valid_string(point->state_text[n], GATEWAY_BACNET_STATE_NAME_MAX, true)) { return false; }
+                bytes += strlen(point->state_text[n]) + 1;
+                if (bytes > STATE_TEXT_BYTES) { return false; }
+                for (size_t previous = 0; previous < n; ++previous) {
+                    if (!strcmp(point->state_text[n], point->state_text[previous])) { return false; }
+                }
+            }
+        } else if (point->state_count || point->state_text) { return false; }
+    }
+    return true;
+}
+
 bool gateway_bacnet_init(const gateway_bacnet_config_t *input, uint64_t timestamp)
 {
     if (!input || stats.initialized || input->device_instance >= BACNET_MAX_INSTANCE ||
-        !input->device_name || !input->device_name[0] || !input->udp_port || !input->local_ip ||
-        input->peer_count > GATEWAY_BACNET_MAX_PEERS || strlen(input->device_name) >= sizeof(device_name)) { return false; }
+        !valid_string(input->device_name, sizeof(device_name) - 1, true) ||
+        !strncmp(input->device_name, "Gateway-", 8) || !input->udp_port || !input->local_ip || input->peer_count > GATEWAY_BACNET_MAX_PEERS ||
+        (input->firmware_version && !valid_string(input->firmware_version, MAX_DEV_VER_LEN, false)) ||
+        (input->location && !valid_string(input->location, MAX_DEV_LOC_LEN, false)) ||
+        (input->model_name && !valid_string(input->model_name, MAX_DEV_MOD_LEN, true)) ||
+        (input->description && !valid_string(input->description, MAX_DEV_DESC_LEN, false)) ||
+        ((input->points == NULL) != (input->point_count == 0))) { return false; }
+    const ats_point_def_t *points = input->points ? input->points : ats_points;
+    size_t point_count = input->points ? input->point_count : ATS_POINT_COUNT;
+    if (!valid_catalog(points, point_count, input->device_name)) { return false; }
     config = *input;
+    config.points = points; config.point_count = point_count;
+    legacy_catalog = points == ats_points;
     snprintf(device_name, sizeof(device_name), "%s", input->device_name);
     snprintf(firmware_version, sizeof(firmware_version), "%s", input->firmware_version ? input->firmware_version : "development");
     snprintf(location, sizeof(location), "%s", input->location ? input->location : "");
     config.device_name = device_name; config.firmware_version = firmware_version; config.location = location;
     now_ms = started_ms = last_timer_ms = last_second_ms = timestamp;
-    stats = (gateway_bacnet_stats_t){.link_up = true, .fault_points = ATS_POINT_COUNT};
+    stats = (gateway_bacnet_stats_t){.link_up = true, .fault_points = (uint32_t)config.point_count};
     memset(recovery, 0, sizeof(recovery));
-    for (unsigned i = 0; i < ATS_POINT_COUNT; ++i) {
+    for (size_t i = 0; i < config.point_count; ++i) {
         csv_reliability[i] = RELIABILITY_COMMUNICATION_FAILURE;
         csv_quality_changed[i] = true;
     }
@@ -356,17 +410,16 @@ bool gateway_bacnet_init(const gateway_bacnet_config_t *input, uint64_t timestam
     Device_Object_Name_ANSI_Init(device_name);
     Device_Set_Vendor_Name("Site Modbus Gateway", 19);
     Device_Set_Vendor_Identifier(config.vendor_id);
-    const char *model_name = "MPAC1500 Modbus-to-BACnet";
-    const char *description = "Read-only Kohler MPAC1500 data via Modbus TCP";
+    const char *model_name = input->model_name ? input->model_name : "ESP32 Modbus-to-BACnet";
+    const char *description = input->description ? input->description : "Read-only Modbus TCP to BACnet/IP converter";
     Device_Set_Model_Name(model_name, strlen(model_name));
     Device_Set_Description(description, strlen(description));
     Device_Set_Location(location, strlen(location));
     Device_Set_Firmware_Revision(firmware_version, strlen(firmware_version));
     Device_Set_Application_Software_Version(firmware_version, strlen(firmware_version));
-    Device_Set_Database_Revision(1);
     Device_Set_System_Status(STATUS_OPERATIONAL, true);
-    for (unsigned i = 0; i < ATS_POINT_COUNT; ++i) {
-        if (!create_point(&ats_points[i])) { gateway_bacnet_shutdown(); return false; }
+    for (size_t i = 0; i < config.point_count; ++i) {
+        if (!create_point(&config.points[i])) { gateway_bacnet_shutdown(); return false; }
     }
     const char *names[] = {"Gateway-Uptime", "Gateway-Packets", "Gateway-Good-Points", "Gateway-Fault-Points"};
     for (unsigned i = 0; i < 4; ++i) {
@@ -375,9 +428,16 @@ bool gateway_bacnet_init(const gateway_bacnet_config_t *input, uint64_t timestam
         Analog_Input_Units_Set(DIAGNOSTIC_BASE + i, i == 0 ? UNITS_SECONDS : UNITS_NO_UNITS);
         Analog_Input_COV_Increment_Set(DIAGNOSTIC_BASE + i, 1.0f);
     }
-    Binary_Input_Create(DIAGNOSTIC_BASE); Binary_Input_Name_Set(DIAGNOSTIC_BASE, "Gateway-Modbus-Healthy");
-    Binary_Input_Description_Set(DIAGNOSTIC_BASE, "Active when the core system-overview point is freshly acquired and qualified; optional points may be unavailable");
-    Binary_Input_Create(DIAGNOSTIC_BASE + 1); Binary_Input_Name_Set(DIAGNOSTIC_BASE + 1, "Gateway-Ethernet-Link");
+    Analog_Input_Present_Value_Set(DIAGNOSTIC_BASE + 3, (float)config.point_count);
+    if (Binary_Input_Create(DIAGNOSTIC_BASE) != DIAGNOSTIC_BASE ||
+        Binary_Input_Create(DIAGNOSTIC_BASE + 1) != DIAGNOSTIC_BASE + 1) {
+        gateway_bacnet_shutdown(); return false;
+    }
+    Binary_Input_Name_Set(DIAGNOSTIC_BASE, "Gateway-Modbus-Healthy");
+    Binary_Input_Description_Set(DIAGNOSTIC_BASE, legacy_catalog ?
+        "Active when the core system-overview point is freshly acquired and qualified; optional points may be unavailable" :
+        "Active when every configured Modbus point is freshly acquired and qualified");
+    Binary_Input_Name_Set(DIAGNOSTIC_BASE + 1, "Gateway-Ethernet-Link");
     Network_Port_Object_Instance_Number_Set(0, NETWORK_INSTANCE);
     Network_Port_Name_Set(NETWORK_INSTANCE, "Gateway-Ethernet");
     Network_Port_Description_Set(NETWORK_INSTANCE, "BACnet/IP Ethernet port; configuration is read-only over BACnet");
@@ -402,18 +462,19 @@ bool gateway_bacnet_init(const gateway_bacnet_config_t *input, uint64_t timestam
     apdu_timeout_set(3000); apdu_retries_set(3);
     handler_cov_init(); tsm_set_timeout_handler(cov_timeout);
     if (!bip_init(NULL)) { gateway_bacnet_shutdown(); return false; }
+    Device_Set_Database_Revision(input->database_revision ? input->database_revision : 1);
     stats.initialized = true;
     Binary_Input_Present_Value_Set(DIAGNOSTIC_BASE + 1, BINARY_ACTIVE);
     announce();
     return true;
 }
 
-void gateway_bacnet_update(const ats_value_t values[ATS_POINT_COUNT])
+void gateway_bacnet_update(const ats_value_t *values)
 {
     if (!stats.initialized || !values) { return; }
     stats.good_points = 0;
-    for (unsigned i = 0; i < ATS_POINT_COUNT; ++i) {
-        const ats_point_def_t *def = &ats_points[i];
+    for (size_t i = 0; i < config.point_count; ++i) {
+        const ats_point_def_t *def = &config.points[i];
         const ats_value_t *value = &values[i];
         bool representable = true;
         if (def->object_type != OBJECT_CHARACTERSTRING_VALUE) {
@@ -456,11 +517,12 @@ void gateway_bacnet_update(const ats_value_t values[ATS_POINT_COUNT])
             default: break;
         }
     }
-    stats.fault_points = ATS_POINT_COUNT - stats.good_points;
+    stats.fault_points = (uint32_t)config.point_count - stats.good_points;
     Analog_Input_Present_Value_Set(DIAGNOSTIC_BASE + 2, (float)stats.good_points);
     Analog_Input_Present_Value_Set(DIAGNOSTIC_BASE + 3, (float)stats.fault_points);
     Binary_Input_Present_Value_Set(DIAGNOSTIC_BASE,
-        values[0].quality == ATS_QUALITY_GOOD && isfinite(values[0].numeric) ? BINARY_ACTIVE : BINARY_INACTIVE);
+        (legacy_catalog ? values[0].quality == ATS_QUALITY_GOOD && isfinite(values[0].numeric) :
+            stats.fault_points == 0) ? BINARY_ACTIVE : BINARY_INACTIVE);
 }
 
 void gateway_bacnet_tick(uint64_t timestamp)
@@ -540,8 +602,17 @@ void gateway_bacnet_shutdown(void)
 {
     bip_cleanup();
     handler_cov_init();
+    /* The stack keeps its COV FSM position across handler_cov_init(). Empty
+     * the state machine before loading another catalog in the same process. */
+    for (unsigned step = 0; step < 8; ++step) { if (handler_cov_fsm()) { break; } }
     for (unsigned invoke = 1; invoke <= UINT8_MAX; ++invoke) { tsm_free_invoke_id((uint8_t)invoke); }
     Analog_Input_Cleanup(); Binary_Input_Cleanup(); Multistate_Input_Cleanup();
     CharacterString_Value_Cleanup(); Network_Port_Cleanup();
-    stats.initialized = false; stats.link_up = false;
+    memset(recovery, 0, sizeof(recovery));
+    memset(csv_reliability, 0, sizeof(csv_reliability));
+    memset(csv_quality_changed, 0, sizeof(csv_quality_changed));
+    config = (gateway_bacnet_config_t){0};
+    stats = (gateway_bacnet_stats_t){0};
+    legacy_catalog = false;
+    now_ms = started_ms = last_timer_ms = last_second_ms = next_announce_ms = 0;
 }

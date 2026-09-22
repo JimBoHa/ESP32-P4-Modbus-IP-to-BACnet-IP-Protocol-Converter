@@ -30,10 +30,25 @@ typedef enum {
 
 typedef struct {
     mb_error_t error;
-    uint8_t exception_code; /* Set only for a valid FC03 exception response. */
+    uint8_t exception_code; /* Set only for a valid matching exception response. */
     uint32_t elapsed_ms;
     int system_error;       /* errno/SO_ERROR for socket failures, otherwise 0. */
 } mb_result_t;
+
+/* Read-only FC01/02/03/04 operations. Quantities are limited to 1..50.
+ * FC01/02 output one 0/1 uint16_t per requested bit; FC03/04 output registers.
+ * Builders/decoders leave caller output unchanged on error. */
+size_t mb_build_read_request(uint8_t request[MB_FC03_REQUEST_SIZE],
+                            uint16_t tid, uint8_t unit, uint8_t function,
+                            uint16_t offset, uint16_t qty);
+mb_error_t mb_decode_read_response(const uint8_t *frame, size_t length,
+                                  uint16_t expected_tid, uint8_t expected_unit,
+                                  uint8_t function, uint16_t qty,
+                                  uint16_t out[MB_MAX_REGISTERS], mb_result_t *result);
+mb_error_t mb_read_points(const char *host_ipv4, uint16_t port, uint8_t unit,
+                         uint8_t function, uint16_t offset, uint16_t qty,
+                         uint16_t tid, uint32_t timeout_ms,
+                         uint16_t out[MB_MAX_REGISTERS], mb_result_t *result);
 
 /* FC03 only. Returns 12 on success or 0 on invalid arguments. The request
  * buffer is unchanged on failure. Offsets are zero based, not 4xxxx labels. */

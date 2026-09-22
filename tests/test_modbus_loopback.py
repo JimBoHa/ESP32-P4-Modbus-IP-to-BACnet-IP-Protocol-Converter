@@ -34,12 +34,12 @@ class ModbusLoopbackTests(unittest.TestCase):
                    str(ROOT / "tests/test_modbus_tcp.c"), "-o", str(cls.executable)]
         subprocess.run(command, check=True, capture_output=True, text=True, timeout=30)
 
-    def invoke(self, port, timeout_ms=1200):
-        completed = subprocess.run([str(self.executable), "--probe", str(port), str(timeout_ms)],
+    def invoke(self, port, timeout_ms=1200, function=3):
+        completed = subprocess.run([str(self.executable), "--probe", str(port), str(timeout_ms), str(function)],
                                    check=True, capture_output=True, text=True, timeout=4)
         return json.loads(completed.stdout)
 
-    def exchange(self, handler, timeout_ms=1200):
+    def exchange(self, handler, timeout_ms=1200, function=3):
         errors = []
         requests = []
         stop = threading.Event()
@@ -71,7 +71,7 @@ class ModbusLoopbackTests(unittest.TestCase):
         thread = threading.Thread(target=serve, daemon=True)
         thread.start()
         try:
-            result = self.invoke(port, timeout_ms)
+            result = self.invoke(port, timeout_ms, function)
         finally:
             stop.set()
             listener.close()
@@ -79,7 +79,9 @@ class ModbusLoopbackTests(unittest.TestCase):
         self.assertFalse(thread.is_alive(), "Loopback server did not finish")
         if errors:
             raise errors[0]
-        self.assertEqual(requests, [REQUEST])
+        expected_request = bytearray(REQUEST)
+        expected_request[7] = function
+        self.assertEqual(requests, [bytes(expected_request)])
         return result
 
     def assert_failure(self, result, error, exception=0):
@@ -102,6 +104,30 @@ class ModbusLoopbackTests(unittest.TestCase):
         self.assertEqual(result["error"], "ok")
         self.assertEqual(result["values"][:3], [1, 32768, 65535])
         self.assertEqual(result["values"][3:], UNCHANGED[3:])
+
+    def test_new_read_functions_and_matching_exceptions(self):
+        for function in (1, 2, 4):
+            with self.subTest(function=function):
+                frame = bytearray(RESPONSE)
+                frame[7] = function
+                if function <= 2:
+                    frame = bytearray.fromhex("12340000000411010105")
+                    frame[7] = function
+                result = self.exchange(lambda connection, stop: connection.sendall(frame),
+                                       function=function)
+                self.assertEqual(result["error"], "ok")
+                self.assertEqual(result["values"][:3], [1, 0, 1] if function <= 2 else [1, 32768, 65535])
+                self.assertEqual(result["values"][3:], UNCHANGED[3:])
+                exception = bytearray.fromhex("123400000003118302")
+                exception[7] = function | 0x80
+                result = self.exchange(lambda connection, stop: connection.sendall(exception),
+                                       function=function)
+                self.assert_failure(result, "exception", exception=2)
+
+    def test_bit_response_wrong_byte_count_is_rejected(self):
+        frame = bytes.fromhex("1234000000051101020500")
+        result = self.exchange(lambda connection, stop: connection.sendall(frame), function=1)
+        self.assert_failure(result, "byte_count")
 
     def test_invalid_headers_and_pdus_do_not_update_registers(self):
         mutations = ((0, 0x13, "transaction"), (2, 1, "protocol"),

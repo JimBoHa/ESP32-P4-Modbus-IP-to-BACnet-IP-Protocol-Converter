@@ -1,4 +1,45 @@
-# Validation record: 0.1.0, 2026-09-22
+# Validation record
+
+## Version 0.2.0: web profiles and CSV maps, 2026-09-22
+
+- ESP-IDF 5.5.4 ESP32-P4 build passes. The image fits the existing 4 MiB
+  application partition. A separate 256 KiB NVS configuration partition is
+  included in the new partition table.
+- Eight native C test executables pass ASan/UBSan with assertions enabled.
+  They cover the existing ATS decoder/scheduler, read-function packets,
+  dynamic BACnet catalogs, custom CSV decoding/polling, configuration parsing,
+  production HTTP handlers and an integrated custom-map path.
+- Twelve Python TCP loopback tests pass for FC01/02/03/04, fragmented replies,
+  malformed frames, exceptions and absolute deadlines.
+- The integrated custom-map test imports six points and makes 19 actual
+  localhost TCP requests (18 valid and one incorrect transaction ID). It
+  checks all four read functions, 14-object BACnet discovery, changing values,
+  fault quality, last-value retention and recovery through production code.
+  BACnet transport is in memory; no field device receives this test traffic.
+- Configuration tests check malformed/oversized/nested JSON, exact CSV rules,
+  128-point capacity, byte order, scaling, duplicate identifiers/names/states,
+  read-only operation and rejected-input preservation.
+- The HTTP test compiles production gateway_web.c against host HTTP/NVS/timer
+  adapters. It verifies fragmented uploads, validation errors, stale-revision
+  conflicts, storage errors, CSV persistence/reload and commit-before-restart.
+  This tests application logic, not physical flash power-loss behavior.
+- Dynamic BACnet tests exercise arbitrary AI/BI/MSI/CSV identifiers, indexed
+  object lists, reliability/COV and replacement of prior catalogs. The
+  electrical preset retains ATS sensing qualification and core health logic.
+- Eleven Chromium browser scenarios pass against the embedded HTML and a
+  loopback API fixture: profile choice, CSV validation/preview, invalid and
+  oversized upload rejection, exact save payloads, saved-map retention,
+  revision conflicts, connection recovery, repairable configuration errors,
+  search/filter and keyboard/mobile behavior. Desktop and mobile screenshots
+  were inspected. No JavaScript errors or external requests were observed.
+  These browser fixtures do not replace the production backend tests above.
+
+The new web/CSV version has not been flashed on an ESP32-P4. Physical USB,
+Ethernet, flash persistence under power interruption, task/heap stability and
+Metasys commissioning remain pending. The prior real-ATS evidence below belongs
+to version 0.1.0; it is not a claim that the new web paths ran on field hardware.
+
+## Version 0.1.0 baseline, 2026-09-22
 
 ## Passed before hardware installation
 

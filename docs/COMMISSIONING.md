@@ -1,6 +1,6 @@
 # Commission the ESP32-P4 ATS gateway
 
-This procedure applies to gateway **v0.1.0**, a Waveshare
+This procedure applies to gateway **v0.2.0**, a Waveshare
 **ESP32-P4-POE-ETH** with 32 MB flash, and the older MPAC 1500 register map.
 The software has been exercised on the host; this new board's USB identity,
 flash contents, Ethernet link, ATS communication, and Metasys behavior still
@@ -154,21 +154,28 @@ Review the effective settings without publishing private addresses:
 rg 'CONFIG_GW_|CONFIG_ESP32P4_REV_|CONFIG_ESP32P4_SELECTS_REV_|CONFIG_ESPTOOLPY_FLASHSIZE' sdkconfig
 ```
 
-The source defaults contain a documentation-only ATS address. A reusable build
-with those defaults will not reach the real controller. Site files and binaries
+The source defaults contain a documentation-only ATS address. After flashing,
+open the gateway IP in a browser and set the target/profile using
+[web configuration](WEB_CONFIGURATION.md). Web settings persist and override
+the build defaults. The gateway IP/static settings and additional I-Am peers
+remain build-time choices. Site files and binaries
 can reveal configured addresses, so keep the private build package separate
 from the reusable source.
 
 ## Flash the matching image
 
-The initial delivery folder, **ESP32-P4-ATS-Gateway-v0.1.0**, contains the private
-site-configured `initial-flash.bin`, a manifest, checksums, and exact flashing
+The older delivery folder, **ESP32-P4-ATS-Gateway-v0.1.0**, contains the private
+site-configured `initial-flash.bin` without the new web/CSV functionality,
+a manifest, checksums, and exact flashing
 instructions. Verify `SHA256SUMS` and confirm that its configuration and supported
 chip revision match this installation. Follow that package's instructions for
 the merged image; do not substitute an app-only binary at the merged-image
 offset.
 
-For your own source build, after the identity, backup, and configuration checks:
+For v0.2.0, build current source and flash its partition table and application
+together. The new `gateway_cfg` NVS partition is at `0x410000`, size `0x40000`.
+An application-only 0.1.0 upgrade cannot create it. After the identity, backup,
+and configuration checks:
 
 ```sh
 idf.py -p "$ATS_USB" flash monitor
@@ -176,7 +183,7 @@ idf.py -p "$ATS_USB" flash monitor
 
 ESP-IDF uses the build's own partition/offset arguments. Exit the monitor with
 **Ctrl+]**. The partition layout currently contains a factory application and
-does not provide OTA slots. Subsequent v0.1.0 updates are USB updates; retain
+does not provide OTA slots. Subsequent v0.2.0 updates are USB updates; retain
 the working binary and configuration before replacing them.
 
 ## Verify Ethernet and the old-map profile
@@ -195,7 +202,7 @@ curl --fail "http://$ATS_GATEWAY/api/status"
 curl --fail "http://$ATS_GATEWAY/api/points"
 ```
 
-`/api/status` should report firmware `0.1.0`, `ethernet_up: true`, and eventually
+`/api/status` should report firmware `0.2.0`, `ethernet_up: true`, and eventually
 `profile_verified: true`. Check `profile_status` when verification fails. Before
 catalog reads, the gateway checks controller type, the expected firmware, the
 new-map MAC range, and then the old-map fingerprint. A newer map or mismatched
@@ -247,10 +254,32 @@ renew or resubscribe. Confirm the site's expected behavior after power recovery.
 
 Read-only enforcement is covered by local tests. This gateway is intended to
 observe the ATS: commissioning does not require a transfer, exercise, alarm
-reset, or controller settings change. HTTP is diagnostic JSON without login or
+reset, or controller settings change. HTTP includes configuration/upload controls without login or
 TLS; make it reachable only from the intended management/building LAN.
 
 If Ethernet is up but BACnet discovery fails, check the selected port, duplicate
 device instances, VLAN/routing boundaries, firewall rules, and supervisor
 discovery scope. If identity passes but points fault, inspect their quality
 reasons and the ATS's options/sensing setup before changing decoder assumptions.
+
+## Web profiles and custom maps
+
+Open `http://GATEWAY_IP/` and follow [WEB_CONFIGURATION.md](WEB_CONFIGURATION.md).
+Validate a CSV before saving; Save and restart applies the entire configuration.
+After reconnecting, confirm the selected profile, target, device instance and
+point count survived reboot. Refresh Metasys field-point discovery after changing
+the map. The electrical preset publishes 24 ATS points plus eight gateway
+objects; full publishes 164 plus eight; custom publishes one per CSV row plus
+eight. Custom maps do not perform the Kohler identity gate.
+
+For a new device, verify one documented read manually, including zero-based
+address, function, byte order, scale and units. Add that point to the CSV first,
+compare the converted value against the device display, then expand the map.
+The supplied example addresses are illustrative and are not a generator map.
+Custom points are read sequentially: 128 points take at least 32 seconds per
+sweep even if `poll_ms` is 1000. Inspect sample age and stale thresholds in JSON.
+
+Hardware acceptance must additionally check valid/invalid uploads, save/reboot
+persistence, power interruption during configuration saving, profile replacement,
+and BACnet fault/recovery for a custom map. Host tests do not establish flash
+power-loss behavior or on-board memory/task stability.

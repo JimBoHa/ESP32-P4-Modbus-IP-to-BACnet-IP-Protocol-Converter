@@ -168,23 +168,75 @@ static void test_invalid_network_arguments(void)
     assert_unchanged(output);
 }
 
+
+static void test_all_read_functions(void)
+{
+    uint8_t request[12], frame[MB_MAX_RESPONSE_SIZE];
+    uint16_t output[MB_MAX_REGISTERS];
+    mb_result_t result;
+    for (uint8_t function = 1; function <= 4; ++function) {
+        assert(mb_build_read_request(request, 0x1234, 0x11, function, 107, 3) == 12);
+        assert(request[7] == function && request[11] == 3);
+        memcpy(frame, good_response, sizeof(good_response));
+        frame[7] = function;
+        size_t length = sizeof(good_response);
+        if (function <= 2) {
+            frame[5] = 4;
+            frame[8] = 1;
+            frame[9] = 5;
+            length = 10;
+        }
+        fill_output(output);
+        assert(mb_decode_read_response(frame, length, 0x1234, 0x11,
+                                        function, 3, output, &result) == MB_OK);
+        assert(output[0] == 1);
+        assert(output[1] == (function <= 2 ? 0 : 32768));
+        assert(output[2] == (function <= 2 ? 1 : 65535));
+        assert(output[3] == SENTINEL);
+        fill_output(output);
+        frame[7] = (uint8_t)(function | 0x80);
+        frame[5] = 3; frame[8] = 2;
+        assert(mb_decode_read_response(frame, 9, 0x1234, 0x11,
+                                       function, 3, output, &result) == MB_ERR_EXCEPTION);
+        assert(result.exception_code == 2);
+        assert_unchanged(output);
+    }
+    /* Fifty bits span seven bytes; bit0 is the least significant wire bit. */
+    const uint8_t bits[] = {0x12,0x34,0,0,0,10,0x11,1,7,0xA5,0,0,0,0,0,2};
+    assert(mb_decode_read_response(bits, sizeof(bits), 0x1234, 0x11, 1, 50,
+                                   output, &result) == MB_OK);
+    assert(output[0] == 1 && output[1] == 0 && output[2] == 1);
+    assert(output[48] == 0 && output[49] == 1);
+    fill_output(output);
+    assert(mb_decode_read_response(bits, sizeof(bits), 0x1234, 0x11, 2, 50,
+                                   output, &result) == MB_ERR_FUNCTION);
+    assert_unchanged(output);
+    for (uint8_t invalid = 0; invalid <= 5; invalid += 5) {
+        assert(!mb_build_read_request(request, 1, 1, invalid, 0, 1));
+        assert(mb_decode_read_response(bits, sizeof(bits), 0x1234, 0x11, invalid, 50,
+                                       output, &result) == MB_ERR_ARGUMENT);
+    }
+}
+
 /* The Python integration driver may contact only a loopback ephemeral port. */
 static int probe(int argc, char **argv)
 {
     uint16_t output[MB_MAX_REGISTERS];
     mb_result_t result;
-    unsigned long port, timeout;
+    unsigned long port, timeout, function = 3;
     size_t index;
-    if (argc != 4) {
+    if (argc != 4 && argc != 5) {
         return 2;
     }
+    if (argc == 5) function = strtoul(argv[4], NULL, 10);
+    if (function < 1 || function > 4) return 2;
     port = strtoul(argv[2], NULL, 10);
     timeout = strtoul(argv[3], NULL, 10);
     if (port == 0 || port > 65535 || timeout == 0 || timeout > 10000) {
         return 2;
     }
     fill_output(output);
-    (void)mb_read_holding("127.0.0.1", (uint16_t)port, 0x11, 107, 3,
+    (void)mb_read_points("127.0.0.1", (uint16_t)port, 0x11, (uint8_t)function, 107, 3,
                          0x1234, (uint32_t)timeout, output, &result);
     printf("{\"error\":\"%s\",\"elapsed_ms\":%lu,\"exception\":%u,"
            "\"system_error\":%d,\"values\":[", mb_error_string(result.error),
@@ -208,6 +260,7 @@ int main(int argc, char **argv)
     test_invalid_frames();
     test_exception();
     test_invalid_network_arguments();
+    test_all_read_functions();
     puts("Modbus TCP packet tests passed");
     return 0;
 }

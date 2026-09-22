@@ -7,6 +7,11 @@
 #include "ats_model.h"
 
 #define GATEWAY_BACNET_MAX_PEERS 4u
+#define GATEWAY_BACNET_MAX_POINTS 256u
+#define GATEWAY_BACNET_POINT_NAME_MAX 95u
+#define GATEWAY_BACNET_POINT_DESCRIPTION_MAX 511u
+#define GATEWAY_BACNET_STATE_NAME_MAX 63u
+#define GATEWAY_BACNET_MAX_STATES 64u
 typedef struct {
     uint32_t ip; /* IPv4 in network byte order. */
     uint16_t port; /* host byte order; zero uses BACnet listening port. */
@@ -22,6 +27,13 @@ typedef struct {
     bool dhcp_enabled;
     gateway_bacnet_peer_t peers[GATEWAY_BACNET_MAX_PEERS];
     size_t peer_count;
+    /* NULL/0 selects the built-in ATS map. Otherwise both fields are required.
+     * Catalog and all referenced strings remain valid until shutdown. */
+    const ats_point_def_t *points;
+    size_t point_count;
+    const char *model_name; /* Optional, at most 32 bytes. */
+    const char *description; /* Optional, at most 64 bytes. */
+    uint32_t database_revision; /* 0 uses 1; increment for each changed map. */
 } gateway_bacnet_config_t;
 typedef struct {
     bool initialized, link_up;
@@ -32,7 +44,8 @@ typedef struct {
 /* All functions belong to one BACnet task. Caller snapshots Modbus state
  * under its own lock, then calls update without holding that lock. */
 bool gateway_bacnet_init(const gateway_bacnet_config_t *config, uint64_t now_ms);
-void gateway_bacnet_update(const ats_value_t values[ATS_POINT_COUNT]);
+/* values contains one entry per active catalog point, in catalog order. */
+void gateway_bacnet_update(const ats_value_t *values);
 void gateway_bacnet_tick(uint64_t now_ms);
 unsigned gateway_bacnet_poll(unsigned timeout_ms);
 bool gateway_bacnet_network_update(uint32_t ip, uint32_t mask, uint32_t gateway,

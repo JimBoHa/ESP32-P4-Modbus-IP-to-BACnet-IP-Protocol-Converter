@@ -74,19 +74,19 @@ const char *mb_error_string(mb_error_t error)
     }
 }
 
-size_t mb_build_fc03_request(uint8_t request[MB_FC03_REQUEST_SIZE],
-                            uint16_t tid, uint8_t unit, uint16_t offset,
-                            uint16_t qty)
+size_t mb_build_read_request(uint8_t request[MB_FC03_REQUEST_SIZE],
+                            uint16_t tid, uint8_t unit, uint8_t function,
+                            uint16_t offset, uint16_t qty)
 {
     uint8_t encoded[MB_FC03_REQUEST_SIZE] = {0};
-    if (request == NULL || !valid_quantity(qty) ||
+    if (request == NULL || function < 1U || function > 4U || !valid_quantity(qty) ||
         (uint32_t)offset + qty > 65536U) {
         return 0;
     }
     write_be16(encoded, tid);
-    write_be16(encoded + 4, 6U); /* Unit + FC03 + offset + quantity. */
+    write_be16(encoded + 4, 6U); /* Unit + read function + offset + quantity. */
     encoded[6] = unit;
-    encoded[7] = 0x03U;
+    encoded[7] = function;
     write_be16(encoded + 8, offset);
     write_be16(encoded + 10, qty);
     memcpy(request, encoded, sizeof(encoded));
@@ -112,10 +112,10 @@ static mb_error_t check_header(const uint8_t *frame, uint16_t expected_tid,
     return MB_OK;
 }
 
-mb_error_t mb_decode_fc03_response(const uint8_t *frame, size_t length,
-                                   uint16_t expected_tid, uint8_t expected_unit,
-                                   uint16_t qty, uint16_t out[MB_MAX_REGISTERS],
-                                   mb_result_t *result)
+mb_error_t mb_decode_read_response(const uint8_t *frame, size_t length,
+                                  uint16_t expected_tid, uint8_t expected_unit,
+                                  uint8_t function, uint16_t qty,
+                                  uint16_t out[MB_MAX_REGISTERS], mb_result_t *result)
 {
     mb_result_t local_result;
     uint16_t decoded[MB_MAX_REGISTERS];
@@ -126,7 +126,7 @@ mb_error_t mb_decode_fc03_response(const uint8_t *frame, size_t length,
         result = &local_result;
     }
     reset_result(result);
-    if (frame == NULL || out == NULL || !valid_quantity(qty)) {
+    if (frame == NULL || out == NULL || function < 1U || function > 4U || !valid_quantity(qty)) {
         error = MB_ERR_ARGUMENT;
         goto done;
     }
@@ -143,7 +143,7 @@ mb_error_t mb_decode_fc03_response(const uint8_t *frame, size_t length,
         error = MB_ERR_LENGTH;
         goto done;
     }
-    if (frame[7] == 0x83U) {
+    if (frame[7] == (uint8_t)(function | 0x80U)) {
         if (remaining != 3U || frame[8] == 0U) {
             error = MB_ERR_LENGTH;
         } else {
@@ -152,20 +152,23 @@ mb_error_t mb_decode_fc03_response(const uint8_t *frame, size_t length,
         }
         goto done;
     }
-    if (frame[7] != 0x03U) {
+    if (frame[7] != function) {
         error = MB_ERR_FUNCTION;
         goto done;
     }
-    if (frame[8] != 2U * qty) {
+    size_t byte_count = function <= 2U ? (qty + 7U) / 8U : 2U * qty;
+    if (frame[8] != byte_count) {
         error = MB_ERR_BYTE_COUNT;
         goto done;
     }
-    if (remaining != 3U + 2U * qty) {
+    if (remaining != 3U + byte_count) {
         error = MB_ERR_LENGTH;
         goto done;
     }
     for (index = 0; index < qty; ++index) {
-        decoded[index] = read_be16(frame + 9U + 2U * index);
+        decoded[index] = function <= 2U ?
+            (uint16_t)((frame[9U + index / 8U] >> (index % 8U)) & 1U) :
+            read_be16(frame + 9U + 2U * index);
     }
     memcpy(out, decoded, (size_t)qty * sizeof(*out));
 done:
@@ -264,10 +267,10 @@ static mb_error_t receive_exact(int fd, uint8_t *bytes, size_t length,
     return mb_monotonic_ms() < deadline ? MB_OK : MB_ERR_TIMEOUT;
 }
 
-mb_error_t mb_read_holding(const char *host_ipv4, uint16_t port, uint8_t unit,
-                           uint16_t offset, uint16_t qty, uint16_t tid,
-                           uint32_t timeout_ms,
-                           uint16_t out[MB_MAX_REGISTERS], mb_result_t *result)
+mb_error_t mb_read_points(const char *host_ipv4, uint16_t port, uint8_t unit,
+                         uint8_t function, uint16_t offset, uint16_t qty,
+                         uint16_t tid, uint32_t timeout_ms,
+                         uint16_t out[MB_MAX_REGISTERS], mb_result_t *result)
 {
     mb_result_t local_result;
     uint8_t request[MB_FC03_REQUEST_SIZE];
@@ -287,7 +290,7 @@ mb_error_t mb_read_holding(const char *host_ipv4, uint16_t port, uint8_t unit,
     reset_result(result);
     memset(&address, 0, sizeof(address));
     if (host_ipv4 == NULL || out == NULL || port == 0U || timeout_ms == 0U ||
-        mb_build_fc03_request(request, tid, unit, offset, qty) == 0U ||
+        mb_build_read_request(request, tid, unit, function, offset, qty) == 0U ||
         inet_pton(AF_INET, host_ipv4, &address.sin_addr) != 1) {
         goto done;
     }
@@ -370,7 +373,7 @@ mb_error_t mb_read_holding(const char *host_ipv4, uint16_t port, uint8_t unit,
     if (error != MB_OK) {
         goto done;
     }
-    error = mb_decode_fc03_response(response, length, tid, unit, qty, out, result);
+    error = mb_decode_read_response(response, length, tid, unit, function, qty, out, result);
 done:
     if (fd >= 0) {
         (void)close(fd);
@@ -379,4 +382,26 @@ done:
     result->elapsed_ms = elapsed > UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed;
     result->error = error;
     return error;
+}
+
+/* Stable FC03 API for the commissioned MPAC profile and existing callers. */
+size_t mb_build_fc03_request(uint8_t request[MB_FC03_REQUEST_SIZE],
+                            uint16_t tid, uint8_t unit, uint16_t offset, uint16_t qty)
+{
+    return mb_build_read_request(request, tid, unit, 3U, offset, qty);
+}
+
+mb_error_t mb_decode_fc03_response(const uint8_t *frame, size_t length,
+                                  uint16_t tid, uint8_t unit, uint16_t qty,
+                                  uint16_t out[MB_MAX_REGISTERS], mb_result_t *result)
+{
+    return mb_decode_read_response(frame, length, tid, unit, 3U, qty, out, result);
+}
+
+mb_error_t mb_read_holding(const char *host, uint16_t port, uint8_t unit,
+                           uint16_t offset, uint16_t qty, uint16_t tid,
+                           uint32_t timeout_ms, uint16_t out[MB_MAX_REGISTERS],
+                           mb_result_t *result)
+{
+    return mb_read_points(host, port, unit, 3U, offset, qty, tid, timeout_ms, out, result);
 }

@@ -4,6 +4,7 @@ sdkconfig.old
 sdkconfig.site*
 .venv*/
 __pycache__/
+node_modules/
 private/
 release/
 *.bin

@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>Modbus → BACnet · Gateway</title>
+<style>
+:root{--ink:#14292e;--muted:#607277;--line:#dce5e5;--paper:#fff;--canvas:#f3f6f5;--green:#137567;--green-dark:#07594e;--soft:#eaf4ef;--amber:#895410;--amber-bg:#fff4df;--red:#a63737;--red-bg:#fff0ef;--radius:14px;--shadow:0 3px 14px #143e3610;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:var(--canvas)}
+*{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}button,a,input,select,summary{touch-action:manipulation}a{color:var(--green);text-underline-offset:3px}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.5}button,input,select{border:1px solid var(--line);border-radius:8px}input,select{width:100%;min-height:42px;background:#fff;color:var(--ink);padding:9px 11px}input:disabled,select:disabled{background:#f1f4f4;color:var(--muted)}:focus-visible{outline:3px solid #79baac;outline-offset:3px}input:focus,select:focus{border-color:var(--green)}input[type=file]{padding:8px;background:transparent;font-size:13px}button{padding:9px 15px;background:white;color:var(--ink);font-weight:600}button:hover:enabled{border-color:var(--green);background:#f5faf7}.primary{background:var(--green);border-color:var(--green);color:#fff}.primary:hover:enabled{background:var(--green-dark);color:#fff}.quiet{background:transparent;font-weight:500}.shell{max-width:1280px;margin:auto;padding:0 30px}.masthead{background:#132f33;color:#e7f1ee}.masthead .shell{display:flex;justify-content:space-between;align-items:center;gap:20px;padding-top:18px;padding-bottom:18px}.brand{display:flex;align-items:center;gap:12px}.logo{border:1px solid #698f88;border-radius:9px;display:grid;place-items:center;width:38px;height:38px;color:#bde2d7;font:24px/1 monospace}.brand-title{font-size:16px;font-weight:650;letter-spacing:.1px}.brand-caption{font-size:11px;text-transform:uppercase;letter-spacing:1.4px;color:#a8c4bd}.host{color:#bad1cc;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.hero{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding-top:32px;padding-bottom:22px}.eyebrow{text-transform:uppercase;font-size:11px;font-weight:700;letter-spacing:1.7px;color:var(--green);margin:0 0 8px}h1{font-size:30px;letter-spacing:-.8px;line-height:1.2;margin:0 0 8px;font-weight:650}h2{font-size:17px;letter-spacing:-.2px;line-height:1.35;margin:0 0 5px}h3{font-size:14px;margin:0 0 5px}.subtle{color:var(--muted);font-size:13px;margin:0}.hero-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:600;padding:5px 10px;border-radius:30px;background:#e8eeee;color:var(--muted);white-space:nowrap}.pill.good{background:var(--soft);color:var(--green-dark)}.pill.warn{background:var(--amber-bg);color:var(--amber)}.pill.bad{background:var(--red-bg);color:var(--red)}.dot{height:7px;width:7px;border-radius:50%;background:currentColor;display:inline-block}.message{border:1px solid var(--line);border-radius:9px;padding:12px 15px;margin-bottom:18px;font-size:13px;white-space:pre-line}.message.error{background:var(--red-bg);border-color:#f0cfca;color:var(--red)}.message.success{background:var(--soft);border-color:#c9e1d6;color:var(--green-dark)}.message.info{background:#edf4f7;border-color:#d3e4ea}.message.warn{background:var(--amber-bg);border-color:#edddba;color:var(--amber)}[hidden]{display:none!important}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-bottom:26px}.stat{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);padding:18px 19px;box-shadow:var(--shadow)}.stat-label{font-size:11px;text-transform:uppercase;letter-spacing:.9px;color:var(--muted);margin-bottom:8px}.stat-value{font-size:23px;font-weight:600;line-height:1.25;letter-spacing:-.5px;overflow-wrap:anywhere}.stat-detail{font-size:12px;color:var(--muted);margin-top:6px}.tabs{display:flex;border-bottom:1px solid var(--line);gap:25px;margin-bottom:23px}.tab{border:none;border-bottom:3px solid transparent;background:transparent;border-radius:0;color:var(--muted);padding:0 1px 12px;font-size:14px}.tab:hover:enabled{background:transparent;border-color:transparent}.tab[aria-selected=true]{color:var(--green);border-bottom-color:var(--green)}.panel{background:var(--paper);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:18px;overflow:hidden}.panel-head{padding:20px 23px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:16px;align-items:center}.panel-body{padding:22px 23px}.config-layout{display:grid;grid-template-columns:minmax(0,1fr) 285px;gap:20px;align-items:start}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.form-grid.three{grid-template-columns:2fr 1fr 1fr}.field{display:flex;flex-direction:column;gap:5px;min-width:0}.field label{font-size:12px;font-weight:650}.hint{font-size:11px;color:var(--muted);line-height:1.45;margin:0}.wide{grid-column:1/-1}.profile-note{background:#f5f8f6;border:1px solid var(--line);border-radius:9px;padding:14px 15px;margin-top:16px}.profile-note p{font-size:12px;margin:4px 0 0;color:var(--muted)}.section-number{font:11px ui-monospace,SFMono-Regular,Consolas,monospace;border:1px solid var(--line);border-radius:5px;padding:3px 6px;color:var(--green);margin-right:7px;vertical-align:2px}.aside-panel{padding:20px}.aside-panel p{font-size:12px;color:var(--muted);margin:8px 0}.aside-list{padding-left:18px;font-size:12px;color:var(--muted);margin:12px 0 0}.aside-list li{padding-bottom:9px}.aside-rule{border:0;border-top:1px solid var(--line);margin:17px 0}.summary-list{margin:0;display:grid;grid-template-columns:1fr auto;gap:9px 12px;font-size:12px}.summary-list dt{color:var(--muted)}.summary-list dd{margin:0;text-align:right;font-weight:600;overflow-wrap:anywhere;max-width:160px}.save-bar{background:#edf3ef;border:1px solid #d0dfd5;border-radius:var(--radius);padding:16px 18px;display:flex;justify-content:space-between;gap:20px;align-items:center;margin:20px 0}.save-bar p{margin:0;font-size:12px;color:var(--muted)}.save-bar strong{display:block;font-size:13px;color:var(--ink);margin-bottom:2px}.file-box{border:1px dashed #a8c8ba;border-radius:10px;background:#f7faf8;padding:18px;margin-bottom:15px}.file-top{display:flex;justify-content:space-between;align-items:flex-start;gap:15px;margin-bottom:10px}.file-box p{font-size:12px;margin:4px 0;color:var(--muted)}.row-actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.link-button{font-size:12px;font-weight:600}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}thead{background:#f5f8f7;color:var(--muted);font-size:10px;letter-spacing:.65px;text-transform:uppercase}th{font-weight:650;padding:11px 16px;white-space:nowrap}td{padding:12px 16px;border-top:1px solid #edf1f0;vertical-align:top}tbody tr:hover{background:#fafcfb}td.name{font-weight:600;min-width:220px;overflow-wrap:anywhere;max-width:440px}td.value{font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;min-width:100px;overflow-wrap:anywhere;max-width:300px}.reason{display:block;font-size:11px;font-weight:400;color:var(--muted);margin-top:3px}.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.toolbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:17px 22px;border-bottom:1px solid var(--line)}.toolbar input{max-width:390px;flex:1;min-width:180px}.toolbar select{max-width:170px}.toolbar .count{font-size:12px;color:var(--muted);margin-left:auto}.empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:13px}.last-update{padding:12px 22px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}details{font-size:12px;border-top:1px solid var(--line);padding-top:16px;margin-top:16px}summary{cursor:pointer;font-weight:600;color:var(--green)}details p{font-size:12px;color:var(--muted)}pre{font:11px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;background:#edf2ef;padding:12px;border-radius:7px;overflow-x:auto;color:#304b43}.help-table td,.help-table th{padding:8px 9px;font-size:11px;letter-spacing:0;text-transform:none}.help-table td:first-child{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;white-space:nowrap}.overview-grid{display:grid;grid-template-columns:1.5fr 1fr;gap:20px}.flow{display:flex;align-items:center;gap:20px;padding:10px 0}.flow-node{flex:1;border:1px solid var(--line);border-radius:10px;padding:16px;background:#fafcfa}.flow-label{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:6px}.flow-value{font-size:15px;font-weight:600;overflow-wrap:anywhere}.flow-detail{font-size:11px;color:var(--muted);margin-top:4px}.flow-arrow{font-size:24px;color:var(--green)}.health-text{font-size:13px;color:var(--muted);margin:16px 0 0}.footer{display:flex;justify-content:space-between;gap:15px;color:var(--muted);font-size:11px;padding:12px 0 30px}.pending{color:var(--amber)}.offline-table{opacity:.65}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(max-width:950px){.config-layout{grid-template-columns:1fr}.aside-panel{display:none}.overview-grid{grid-template-columns:1fr}.stats{gap:10px}.stat{padding:15px}.stat-value{font-size:21px}}
+@media(max-width:620px){.shell{padding-left:17px;padding-right:17px}.masthead .shell{padding-top:14px;padding-bottom:14px}.host{display:none}.hero{padding-top:25px;display:block}.hero-actions{margin-top:14px}h1{font-size:26px}.stats{grid-template-columns:1fr 1fr;margin-bottom:22px}.stat-label{font-size:10px}.stat-value{font-size:21px}.stat-detail{font-size:11px}.tabs{gap:22px}.panel-head,.panel-body{padding:17px}.panel-head{align-items:flex-start}.form-grid,.form-grid.three{grid-template-columns:1fr}.save-bar{align-items:stretch;flex-direction:column;gap:13px}.save-bar .row-actions button{flex:1}.toolbar{padding:14px;gap:9px}.toolbar input{max-width:none;width:100%}.toolbar select{max-width:none;width:calc(50% - 5px)}.toolbar .count{margin-left:0;width:100%}.flow{gap:10px}.flow-node{padding:12px}.flow-value{font-size:13px}.flow-arrow{font-size:19px}.footer{flex-direction:column;gap:4px}.file-top{display:block}.file-top .row-actions{margin-top:10px}.table-wrap th,.table-wrap td{padding-left:12px;padding-right:12px}.pill{font-size:11px}.logo{width:34px;height:34px}.brand-title{font-size:14px}}
+</style>
+</head>
+<body>
+<header class="masthead"><div class="shell"><div class="brand"><div class="logo" aria-hidden="true">⇄</div><div><div class="brand-title">Modbus → BACnet</div><div class="brand-caption">Ethernet gateway</div></div></div><div class="host" id="gatewayHost">ESP32-P4</div></div></header>
+<main class="shell">
+<div class="hero"><div><p class="eyebrow">ESP32-P4 · Read-only field data</p><h1>Gateway console</h1><p class="subtle" id="heroDescription">Monitor the connection and configure the data exposed to BACnet.</p></div><div class="hero-actions"><span class="pill" id="connectionBadge"><span class="dot" aria-hidden="true"></span><span id="connectionLabel">Connecting</span></span><button type="button" class="quiet" id="refreshButton">Refresh</button></div></div>
+<div id="globalMessage" class="message" role="status" aria-live="polite" hidden></div>
+<section class="stats" aria-label="Gateway status">
+<div class="stat"><div class="stat-label">Modbus source</div><div class="stat-value mono" id="sourceHost">—</div><div class="stat-detail" id="sourceDetail">Waiting for status</div></div>
+<div class="stat"><div class="stat-label">BACnet device</div><div class="stat-value mono" id="deviceInstance">—</div><div class="stat-detail" id="deviceDetail">Waiting for status</div></div>
+<div class="stat"><div class="stat-label">Point quality</div><div class="stat-value" id="pointQuality">—</div><div class="stat-detail" id="pointQualityDetail">Waiting for readings</div></div>
+<div class="stat"><div class="stat-label">Last Modbus reply</div><div class="stat-value" id="replyAge">—</div><div class="stat-detail" id="replyDetail">Waiting for status</div></div>
+</section>
+<div class="tabs" role="tablist" aria-label="Console views"><button class="tab" role="tab" id="overviewTab" aria-controls="overviewPane" aria-selected="true" data-pane="overviewPane">Overview</button><button class="tab" role="tab" id="configTab" aria-controls="configPane" aria-selected="false" tabindex="-1" data-pane="configPane">Configuration</button><button class="tab" role="tab" id="pointsTab" aria-controls="pointsPane" aria-selected="false" tabindex="-1" data-pane="pointsPane">Live points</button></div>
+<section id="overviewPane" role="tabpanel" aria-labelledby="overviewTab">
+<div class="overview-grid"><div class="panel"><div class="panel-head"><div><h2>Connection overview</h2><p class="subtle">Source readings flow from Modbus TCP into BACnet/IP.</p></div></div><div class="panel-body"><div class="flow"><div class="flow-node"><div class="flow-label">Modbus TCP</div><div class="flow-value" id="flowSource">Waiting for source</div><div class="flow-detail" id="flowModbusDetail">—</div></div><div class="flow-arrow" aria-hidden="true">→</div><div class="flow-node"><div class="flow-label">BACnet/IP</div><div class="flow-value" id="flowDestination">Waiting for device</div><div class="flow-detail" id="flowBacnetDetail">—</div></div></div><p class="health-text" id="profileHealth">Loading controller verification status.</p><div class="profile-note"><h3 id="activeProfileName">Loading profile</h3><p id="activeProfileDescription">The selected profile defines which values are read and exposed.</p></div></div></div>
+<div class="panel"><div class="panel-head"><div><h2>Gateway details</h2><p class="subtle">Current runtime information</p></div></div><div class="panel-body"><dl class="summary-list"><dt>Firmware</dt><dd id="firmwareValue">—</dd><dt>Ethernet</dt><dd id="ethernetValue">—</dd><dt>Uptime</dt><dd id="uptimeValue">—</dd><dt>Modbus requests</dt><dd id="requestsValue">—</dd><dt>Successful replies</dt><dd id="successesValue">—</dd><dt>Failed requests</dt><dd id="failuresValue">—</dd><dt>BACnet packets</dt><dd id="packetsValue">—</dd><dt>Configuration revision</dt><dd id="revisionValue">—</dd></dl></div></div></div>
+</section>
+<section id="configPane" role="tabpanel" aria-labelledby="configTab" hidden>
+<form id="configForm"><fieldset id="configFields" disabled style="border:0;padding:0;margin:0;min-width:0"><div class="config-layout"><div>
+<div class="panel"><div class="panel-head"><div><h2><span class="section-number">01</span>Data profile</h2><p class="subtle">Choose the controller map or provide a custom CSV.</p></div><span class="pill" id="profileCount">— points</span></div><div class="panel-body"><div class="field"><label for="profile">Profile</label><select id="profile" name="profile" required><option value="">Loading profiles…</option></select></div><div class="profile-note"><h3 id="selectedProfileName">Choose a profile</h3><p id="selectedProfileDescription">Profile details will appear here.</p></div></div></div>
+<div class="panel"><div class="panel-head"><div><h2><span class="section-number">02</span>Modbus connection</h2><p class="subtle">The address of the source device.</p></div></div><div class="panel-body"><div class="form-grid three"><div class="field"><label for="modbus_host">Source IPv4 address</label><input id="modbus_host" name="modbus_host" type="text" inputmode="decimal" placeholder="192.168.1.50" maxlength="15" required autocomplete="off" spellcheck="false"><p class="hint">Enter the Modbus device address, not this gateway’s address.</p></div><div class="field"><label for="modbus_port">TCP port</label><input id="modbus_port" name="modbus_port" type="number" min="1" max="65535" step="1" required></div><div class="field"><label for="modbus_unit">Unit ID</label><input id="modbus_unit" name="modbus_unit" type="number" min="0" max="255" step="1" required></div></div><div id="atsIdentity"><details open><summary>MPAC1500 controller verification</summary><p>Both built-in profiles use the older MPAC1500 Section 13 ATS map. These settings identify the expected controller.</p><div class="form-grid"><div class="field"><label for="expected_firmware">Expected firmware word</label><input id="expected_firmware" name="expected_firmware" type="number" min="0" max="65535" step="1" required><p class="hint">Decimal raw word. Firmware 2.03 is 515 (0x0203).</p></div><div class="field"><label for="expected_mac_fragment">Expected MAC fragment</label><input id="expected_mac_fragment" name="expected_mac_fragment" type="number" min="0" max="32767" step="1" required><p class="hint">Decimal low 15 bits of the old-map MAC register. Zero disables this extra check.</p></div></div></details></div></div></div>
+<div class="panel"><div class="panel-head"><div><h2><span class="section-number">03</span>BACnet identity</h2><p class="subtle">How this gateway appears in your building system.</p></div></div><div class="panel-body"><div class="form-grid"><div class="field wide"><label for="device_name">Device name</label><input id="device_name" name="device_name" type="text" maxlength="95" required autocomplete="off" spellcheck="false"><p class="hint">1–95 printable ASCII characters. The prefix Gateway- is reserved.</p></div><div class="field"><label for="device_instance">Device instance</label><input id="device_instance" name="device_instance" type="number" min="0" max="4194302" step="1" required><p class="hint">Choose an instance unique on the BACnet network.</p></div><div class="field"><label for="bacnet_port">UDP port</label><input id="bacnet_port" name="bacnet_port" type="number" min="1" max="65535" step="1" required><p class="hint">Standard BACnet/IP port: 47808.</p></div></div></div></div>
+<div class="panel" id="customMapPanel" hidden><div class="panel-head"><div><h2><span class="section-number">04</span>Custom point map</h2><p class="subtle">Validate your CSV and review its points before saving.</p></div><span class="pill" id="mapBadge">No map loaded</span></div><div class="panel-body"><div class="file-box"><div class="file-top"><div><h3>Upload a CSV map</h3><p>Up to 128 points · 32 KiB · zero-based Modbus addresses</p></div><div class="row-actions"><a href="/api/template.csv" class="link-button" download="gateway-point-template.csv">Download template</a><a href="/api/map.csv" class="link-button" id="savedMapLink" download="gateway-saved-map.csv" hidden>Saved map</a></div></div><label class="sr-only" for="csvFile">Choose a CSV point map</label><input id="csvFile" type="file" accept=".csv,text/csv"><p id="fileSummary">Choose a file to validate. Validation does not change the active configuration.</p><div class="row-actions" style="margin-top:12px"><button type="button" id="validateButton" disabled>Validate again</button><button type="button" class="quiet" id="clearFileButton" hidden>Keep saved map</button></div></div><div id="mapMessage" class="message" role="status" aria-live="polite" hidden></div><div id="previewWrap" hidden><div class="row-actions" style="justify-content:space-between;margin-bottom:10px"><h3>Validated point preview</h3><span class="subtle" id="previewCount"></span></div><div class="table-wrap" style="max-height:320px;overflow-y:auto;border:1px solid var(--line);border-radius:8px"><table><thead><tr><th>Object</th><th>Instance</th><th>Point name</th></tr></thead><tbody id="previewBody"></tbody></table></div></div><details><summary>CSV format and limits</summary><p>Use this exact header. Quote fields containing commas or quotes.</p><pre>instance,name,object_type,function,address,data_type,byte_order,scale,offset,units,bit,states,length,poll_ms,description</pre><div class="table-wrap"><table class="help-table"><tbody><tr><td>object_type</td><td>AI, BI, MSI, or CSV</td></tr><tr><td>function</td><td>1: coils · 2: discrete inputs · 3: holding registers · 4: input registers. All reads.</td></tr><tr><td>address</td><td>Zero-based Modbus wire address. Do not add a 3xxxx or 4xxxx prefix.</td></tr><tr><td>data_type</td><td>u16, s16, u32, s32, f32, bit, ascii, or bool</td></tr><tr><td>byte_order</td><td>AB or BA for 16-bit values and ASCII; ABCD, BADC, CDAB, or DCBA for 32-bit values. Leave blank for bool.</td></tr><tr><td>scale / offset</td><td>Numeric conversion after decoding. Use the source device’s documented units.</td></tr><tr><td>states</td><td>MSI labels separated by |, up to 16 states. Each label: 63 characters maximum; combined field: 512. BACnet states start at 1.</td></tr><tr><td>length</td><td>ASCII length, up to 20 characters.</td></tr><tr><td>poll_ms</td><td>Requested polling interval: 1000–3600000 milliseconds.</td></tr><tr><td>name / description</td><td>Point name: 63 characters maximum. Description: 127. All CSV fields: 512 characters maximum.</td></tr></tbody></table></div><p>The gateway checks types, ranges, duplicate objects, and compatible field combinations. Review any validation error before saving.</p></details></div></div>
+<div class="save-bar"><div><strong id="saveTitle">Configuration loaded</strong><p>Saving restarts the gateway. After a profile or point-map change, refresh BACnet point discovery.</p></div><div class="row-actions"><button type="button" class="quiet" id="resetButton">Discard changes</button><button type="submit" class="primary" id="saveButton">Save and restart</button></div></div>
+</div><aside class="panel aside-panel"><h3>Before applying</h3><ol class="aside-list"><li>Confirm the source address and controller profile.</li><li>Use a BACnet device instance unique on your network.</li><li>For a custom map, validate the CSV and review the preview.</li><li>Save, wait for the gateway to reconnect, then refresh BACnet discovery.</li></ol><hr class="aside-rule"><h3>Built-in controller</h3><p>Kohler MPAC1500 <strong>automatic transfer switch</strong>, older Section 13 register map.</p><p>The full and electrical profiles share the same decoding and controller verification. They are not generator engine-controller profiles.</p><hr class="aside-rule"><h3>Data quality</h3><p>Faulted points can retain the last received value or show unverified raw information. Check the quality reason before using a reading.</p></aside></div></fieldset></form>
+<div id="saveMessage" class="message" role="status" aria-live="polite" hidden></div>
+</section>
+<section id="pointsPane" role="tabpanel" aria-labelledby="pointsTab" hidden><div class="panel"><div class="panel-head"><div><h2>Live point values</h2><p class="subtle">Values and quality from the active profile.</p></div><span class="pill" id="pointsLiveBadge">Waiting</span></div><div class="toolbar"><label for="pointSearch" class="sr-only">Search point name, instance, or address</label><input id="pointSearch" type="search" placeholder="Search name, instance, or address…" autocomplete="off"><label for="qualityFilter" class="sr-only">Quality filter</label><select id="qualityFilter"><option value="all">All quality</option><option value="good">Good only</option><option value="fault">Faulted only</option></select><label for="typeFilter" class="sr-only">Object type filter</label><select id="typeFilter"><option value="all">All object types</option><option value="AI">Analog inputs</option><option value="BI">Binary inputs</option><option value="MSI">Multistate inputs</option><option value="CSV">Text values</option></select><span id="filteredCount" class="count">0 points</span></div><div class="table-wrap" id="pointTableWrap"><table id="pointTable"><thead><tr><th>Point</th><th>Value</th><th>Quality</th><th>Object</th><th>Address</th></tr></thead><tbody id="pointsBody"></tbody></table><div class="empty" id="pointsEmpty">Waiting for the first point update.</div></div><div class="last-update" id="pointsUpdated">No values received yet.</div></div></section>
+<footer class="footer"><span id="footerFirmware">ESP32-P4 Ethernet gateway</span><span>Read-only Modbus acquisition · BACnet/IP publishing</span></footer>
+</main>
+<script>
+"use strict";
+(() => {
+  const $ = id => document.getElementById(id);
+  const text = (id, value) => { $(id).textContent = value == null ? "—" : String(value); };
+  const fieldNames = ["profile", "modbus_host", "modbus_port", "modbus_unit", "device_instance", "device_name", "bacnet_port", "expected_firmware", "expected_mac_fragment"];
+  const numericFields = new Set(["modbus_port", "modbus_unit", "device_instance", "bacnet_port", "expected_firmware", "expected_mac_fragment"]);
+  const typeNames = {0:"AI",3:"BI",13:"MSI",40:"CSV",analogInput:"AI",binaryInput:"BI",multiStateInput:"MSI",characterstringValue:"CSV"};
+  let savedConfig = null, profiles = [], points = [], currentStatus = null;
+  let csvText = null, validatedCsv = null, validationResult = null, validationSequence = 0;
+  let refreshing = false, saving = false, restarting = false, refreshTimer = null, retryDelay = 5000, lastPointsTime = 0;
+
+  function message(id, content, kind = "info") {
+    const node = $(id); node.textContent = content || ""; node.className = "message " + kind; node.hidden = !content;
+  }
+  function badge(id, label, quality = "") {
+    $(id).className = "pill" + (quality ? " " + quality : ""); $(id).textContent = label;
+  }
+  function connection(label, quality = "") {
+    $("connectionBadge").className = "pill" + (quality ? " " + quality : ""); text("connectionLabel", label);
+  }
+  function pointType(value) { return typeNames[value] || String(value == null ? "—" : value).toUpperCase(); }
+  function goodQuality(value) { return String(value || "").toLowerCase() === "good"; }
+  function number(value) { return typeof value === "number" && Number.isFinite(value) ? value : null; }
+  function count(value) { return number(value) == null ? "—" : Math.round(value).toLocaleString(); }
+  function duration(seconds) {
+    if (number(seconds) == null || seconds < 0) return "—";
+    const s = Math.floor(seconds);
+    if (s < 60) return s + " s";
+    if (s < 3600) return Math.floor(s / 60) + " min " + s % 60 + " s";
+    if (s < 86400) return Math.floor(s / 3600) + " h " + Math.floor(s % 3600 / 60) + " min";
+    return Math.floor(s / 86400) + " d " + Math.floor(s % 86400 / 3600) + " h";
+  }
+  function formatValue(value) {
+    if (value == null) return "—";
+    if (typeof value === "number") return Number.isFinite(value) ? value.toLocaleString(undefined, {maximumFractionDigits:6}) : "—";
+    if (typeof value === "boolean") return value ? "Active" : "Inactive";
+    return String(value);
+  }
+  async function api(path, options = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.method ? 15000 : 7000);
+    try {
+      const response = await fetch(path, {...options, cache:"no-store", credentials:"same-origin", signal:controller.signal});
+      const content = await response.text();
+      let result;
+      try { result = content ? JSON.parse(content) : {}; }
+      catch (_) { throw new Error("The gateway returned an unexpected response (HTTP " + response.status + ")."); }
+      if (!response.ok) throw new Error(result.error || result.message || "Gateway request failed (HTTP " + response.status + ").");
+      return result;
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error("The gateway did not respond in time.");
+      throw error;
+    } finally { clearTimeout(timeout); }
+  }
+  function post(path, data) {
+    return api(path, {method:"POST", headers:{"Content-Type":"application/json", "X-Gateway-Request":"1"}, body:JSON.stringify(data)});
+  }
+  function currentProfile(id) { return profiles.find(profile => profile.id === id); }
+  function showPane(id, focus = false) {
+    document.querySelectorAll("[role=tab]").forEach(tab => {
+      const selected = tab.dataset.pane === id;
+      tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1;
+      $(tab.dataset.pane).hidden = !selected;
+      if (selected && focus) tab.focus();
+    });
+  }
+  document.querySelectorAll("[role=tab]").forEach(tab => {
+    tab.addEventListener("click", () => showPane(tab.dataset.pane));
+    tab.addEventListener("keydown", event => {
+      const tabs = [...document.querySelectorAll("[role=tab]")], index = tabs.indexOf(tab);
+      let next = null;
+      if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+      if (event.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+      if (event.key === "Home") next = 0;
+      if (event.key === "End") next = tabs.length - 1;
+      if (next != null) { event.preventDefault(); showPane(tabs[next].dataset.pane, true); }
+    });
+  });
+  function configValues() {
+    const result = {};
+    fieldNames.forEach(name => {
+      result[name] = numericFields.has(name) ? Number($(name).value) : $(name).value.trim();
+    });
+    return result;
+  }
+  function dirty() {
+    if (!savedConfig) return false;
+    const current = configValues();
+    return $("csvFile").files.length > 0 || csvText !== null || fieldNames.some(name => String(current[name]) !== String(savedConfig[name] == null ? "" : savedConfig[name]));
+  }
+  function updateSaveState() {
+    if (!savedConfig || saving || restarting) { $("saveButton").disabled = true; return; }
+    const custom = $("profile").value === "custom";
+    const mapReady = !custom || ($("csvFile").files.length > 0 ? csvText !== null && csvText === validatedCsv && validationResult?.ok === true : Number(savedConfig.custom_point_count) > 0);
+    $("saveButton").disabled = !mapReady;
+    const changed = dirty();
+    text("saveTitle", changed ? "Unsaved changes" : "Configuration loaded");
+    $("saveTitle").className = changed ? "pending" : "";
+    $("resetButton").disabled = !changed;
+  }
+  function updateSelectedProfile() {
+    const selected = currentProfile($("profile").value), custom = $("profile").value === "custom";
+    text("selectedProfileName", selected?.name || "Choose a profile");
+    text("selectedProfileDescription", selected?.description || "Select a controller profile to continue.");
+    const pointCount = custom && validationResult?.ok ? validationResult.point_count : custom ? savedConfig?.custom_point_count : selected?.point_count;
+    badge("profileCount", count(pointCount) + " points");
+    $("customMapPanel").hidden = !custom; $("atsIdentity").hidden = custom;
+    $("expected_firmware").disabled = custom; $("expected_mac_fragment").disabled = custom;
+    $("savedMapLink").hidden = !(Number(savedConfig?.custom_point_count) > 0);
+    updateSaveState();
+  }
+  function populateConfig(config) {
+    savedConfig = config;
+    fieldNames.forEach(name => {
+      $(name).value = config[name] == null ? "" : String(config[name]);
+      if ($(name) instanceof HTMLInputElement) $(name).setCustomValidity("");
+    });
+    $("configFields").disabled = false;
+    resetCsv(); updateSelectedProfile(); text("revisionValue", config.revision);
+    if (config.config_error) message("globalMessage", "Configuration: " + config.config_error, "warn");
+  }
+  function resetCsv() {
+    validationSequence++; csvText = validatedCsv = validationResult = null;
+    $("csvFile").value = ""; $("previewBody").replaceChildren(); $("previewWrap").hidden = true;
+    $("validateButton").disabled = true; $("clearFileButton").hidden = true;
+    message("mapMessage", "");
+    const saved = Number(savedConfig?.custom_point_count) || 0;
+    badge("mapBadge", saved ? saved + " saved points" : "No map loaded", saved ? "good" : "");
+    text("fileSummary", saved ? "The saved custom map will be kept unless you upload a replacement." : "Choose a file to validate. Validation does not change the active configuration.");
+  }
+  function renderPreview(result) {
+    const fragment = document.createDocumentFragment();
+    (result.points || []).forEach(point => {
+      const row = document.createElement("tr");
+      [pointType(point.object_type), point.instance, point.name].forEach(value => { const cell = document.createElement("td"); cell.textContent = String(value ?? "—"); row.append(cell); });
+      fragment.append(row);
+    });
+    $("previewBody").replaceChildren(fragment); $("previewWrap").hidden = false;
+    text("previewCount", count(result.point_count) + " points");
+  }
+  async function validateCsv() {
+    if (csvText === null || saving || restarting) return;
+    const sequence = ++validationSequence, candidate = csvText;
+    validatedCsv = null; validationResult = null; $("previewWrap").hidden = true;
+    $("validateButton").disabled = true; badge("mapBadge", "Validating");
+    message("mapMessage", "Checking the CSV on the gateway…"); updateSaveState();
+    try {
+      const result = await post("/api/validate", {csv:candidate});
+      if (sequence !== validationSequence) return;
+      if (result.ok !== true) throw new Error(result.error || "The CSV did not pass validation.");
+      validatedCsv = candidate; validationResult = result;
+      renderPreview(result); badge("mapBadge", "Validated", "good");
+      message("mapMessage", count(result.point_count) + " points validated. Review the preview, then use Save and restart to apply this map.", "success");
+    } catch (error) {
+      if (sequence !== validationSequence) return;
+      badge("mapBadge", "Needs attention", "bad"); message("mapMessage", error.message, "error");
+    } finally {
+      if (sequence === validationSequence) { $("validateButton").disabled = false; updateSelectedProfile(); }
+    }
+  }
+  $("csvFile").addEventListener("change", async () => {
+    const file = $("csvFile").files[0];
+    validationSequence++; validatedCsv = validationResult = null; csvText = null;
+    $("previewWrap").hidden = true; $("validateButton").disabled = true; updateSaveState();
+    if (!file) { resetCsv(); updateSelectedProfile(); return; }
+    $("clearFileButton").hidden = false;
+    text("clearFileButton", Number(savedConfig?.custom_point_count) > 0 ? "Keep saved map" : "Clear file");
+    text("fileSummary", file.name + " · " + file.size.toLocaleString() + " bytes");
+    if (file.size > 32768) { badge("mapBadge", "File too large", "bad"); message("mapMessage", "The CSV must be 32 KiB or smaller.", "error"); $("saveButton").disabled = true; return; }
+    const sequence = validationSequence;
+    try {
+      const candidate = await file.text();
+      if (sequence !== validationSequence) return;
+      if (new TextEncoder().encode(candidate).length > 32768) throw new Error("The CSV must be 32 KiB or smaller.");
+      csvText = candidate; await validateCsv();
+    } catch (error) { if (sequence === validationSequence) message("mapMessage", error.message, "error"); }
+  });
+  $("validateButton").addEventListener("click", validateCsv);
+  $("clearFileButton").addEventListener("click", () => { resetCsv(); updateSelectedProfile(); });
+  $("profile").addEventListener("change", updateSelectedProfile);
+  $("configForm").addEventListener("input", event => {
+    if (event.target instanceof HTMLInputElement) event.target.setCustomValidity("");
+    updateSaveState();
+  });
+  $("resetButton").addEventListener("click", () => { if (savedConfig) { populateConfig(savedConfig); message("saveMessage", "Changes discarded."); } });
+  function validateForm() {
+    $("modbus_host").setCustomValidity("");
+    const host = $("modbus_host").value.trim(), octets = host.split(".");
+    if (octets.length !== 4 || octets.some(part => !/^(0|[1-9]\d{0,2})$/.test(part) || Number(part) > 255) || Number(octets[0]) === 0 || Number(octets[0]) >= 224) $("modbus_host").setCustomValidity("Enter a unicast IPv4 address, such as 192.168.1.50.");
+    $("device_name").setCustomValidity("");
+    const name = $("device_name").value.trim();
+    if (!/^[\x20-\x7e]{1,95}$/.test(name) || name.startsWith("Gateway-")) $("device_name").setCustomValidity("Use 1–95 printable ASCII characters without the reserved Gateway- prefix.");
+    return $("configForm").reportValidity();
+  }
+  async function waitForRestart(previousRevision) {
+    const deadline = Date.now() + 60000;
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    while (Date.now() < deadline) {
+      try {
+        const config = await api("/api/config");
+        if (config.revision !== previousRevision) {
+          restarting = saving = false;
+          populateConfig(config);
+          message("saveMessage", "Configuration saved. Gateway is responding. Refresh BACnet device and point discovery after a profile or map change.", "success");
+          message("globalMessage", "");
+          await refresh(); return;
+        }
+      } catch (_) { /* Expected while the gateway restarts. */ }
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    restarting = saving = false; $("configFields").disabled = false; updateSelectedProfile();
+    message("saveMessage", "The save was accepted, but this page has not confirmed the gateway after restart. Refresh the page when it is reachable; check its address if it changed.", "warn");
+    connection("Reconnecting", "warn"); scheduleRefresh(5000);
+  }
+  $("configForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!savedConfig || saving || restarting || !validateForm()) return;
+    const payload = {...configValues(), revision:savedConfig.revision};
+    if (payload.profile === "custom") {
+      if ($("csvFile").files.length > 0) {
+        if (csvText === null || csvText !== validatedCsv || validationResult?.ok !== true) { message("saveMessage", "Validate the CSV successfully before saving.", "error"); return; }
+        payload.csv = validatedCsv;
+      } else if (!(Number(savedConfig.custom_point_count) > 0)) { message("saveMessage", "Upload and validate a custom CSV map first.", "error"); return; }
+    }
+    const previousRevision = savedConfig.revision;
+    saving = true; clearTimeout(refreshTimer); $("configFields").disabled = true;
+    message("saveMessage", "Saving configuration…");
+    try {
+      await post("/api/config", payload);
+      restarting = true; connection("Restarting", "warn"); badge("pointsLiveBadge", "Restarting", "warn");
+      message("saveMessage", "Configuration saved. The gateway is restarting; this page will reconnect automatically.");
+      await waitForRestart(previousRevision);
+    } catch (error) {
+      saving = false; $("configFields").disabled = false; updateSelectedProfile();
+      message("saveMessage", error.message + " If the connection closed during save, reload the page to check the stored configuration before retrying.", "error");
+      scheduleRefresh(5000);
+    }
+  });
+  function renderStatus(status) {
+    currentStatus = status;
+    const active = currentProfile(status.profile || savedConfig?.profile);
+    text("sourceHost", status.modbus_host || savedConfig?.modbus_host);
+    text("sourceDetail", "TCP " + (status.modbus_port || savedConfig?.modbus_port || "—") + " · Unit " + (status.modbus_unit ?? savedConfig?.modbus_unit ?? "—"));
+    text("deviceInstance", status.bacnet_device_instance ?? status.device_instance ?? savedConfig?.device_instance);
+    text("deviceDetail", status.device_name || savedConfig?.device_name);
+    const good = number(status.good_points), fault = number(status.fault_points), total = good != null && fault != null ? good + fault : number(status.point_count);
+    text("pointQuality", good == null ? "—" : count(good) + " / " + count(total));
+    text("pointQualityDetail", fault == null ? "Waiting for readings" : count(fault) + " faulted or unavailable");
+    text("replyAge", status.last_modbus_response_age_seconds == null ? "No reply" : duration(status.last_modbus_response_age_seconds) + " ago");
+    text("replyDetail", count(status.modbus_successful_responses) + " successful responses");
+    text("flowSource", status.modbus_host || savedConfig?.modbus_host);
+    text("flowModbusDetail", "TCP " + (status.modbus_port || savedConfig?.modbus_port || "—") + " · Unit " + (status.modbus_unit ?? savedConfig?.modbus_unit ?? "—"));
+    text("flowDestination", "Device " + (status.bacnet_device_instance ?? status.device_instance ?? savedConfig?.device_instance ?? "—"));
+    text("flowBacnetDetail", "UDP " + (status.bacnet_port || savedConfig?.bacnet_port || "—"));
+    text("profileHealth", status.profile_status || (status.profile_verified ? "Controller verification passed." : "Waiting for controller verification."));
+    text("activeProfileName", active?.name || status.profile || "Profile unavailable");
+    text("activeProfileDescription", active?.description || "");
+    text("firmwareValue", status.firmware); text("ethernetValue", status.ethernet_up ? "Link up" : "Link down");
+    text("uptimeValue", duration(status.uptime_seconds)); text("requestsValue", count(status.modbus_requests));
+    text("successesValue", count(status.modbus_successful_responses)); text("failuresValue", count(status.modbus_failures));
+    text("packetsValue", count(status.bacnet_received_packets));
+    text("footerFirmware", (status.board || "ESP32-P4") + (status.firmware ? " · Firmware " + status.firmware : ""));
+    connection(status.ethernet_up ? "Connected" : "Ethernet down", status.ethernet_up ? "good" : "warn");
+  }
+  function renderPoints() {
+    const query = $("pointSearch").value.trim().toLowerCase(), quality = $("qualityFilter").value, type = $("typeFilter").value;
+    const visible = points.filter(point => {
+      const good = goodQuality(point.quality);
+      return (quality === "all" || (quality === "good" ? good : !good)) &&
+        (type === "all" || pointType(point.object_type) === type) &&
+        (!query || [point.name, point.instance, point.modbus_offset, point.quality_reason].some(value => String(value ?? "").toLowerCase().includes(query)));
+    });
+    const fragment = document.createDocumentFragment();
+    visible.forEach(point => {
+      const row = document.createElement("tr"), name = document.createElement("td"), value = document.createElement("td"), qualityCell = document.createElement("td"), object = document.createElement("td"), address = document.createElement("td");
+      name.className = "name"; name.textContent = point.name || "Unnamed point";
+      if (point.quality_reason) { const reason = document.createElement("span"); reason.className = "reason"; reason.textContent = point.quality_reason; name.append(reason); }
+      value.className = "value"; value.textContent = formatValue(point.value);
+      const label = document.createElement("span"); label.className = "pill " + (goodQuality(point.quality) ? "good" : "warn"); label.textContent = point.quality || "Unknown"; qualityCell.append(label);
+      object.className = "mono"; object.textContent = pointType(point.object_type) + " " + point.instance;
+      address.className = "mono"; address.textContent = point.modbus_offset == null ? "—" : String(point.modbus_offset);
+      row.append(name, value, qualityCell, object, address); fragment.append(row);
+    });
+    $("pointsBody").replaceChildren(fragment); $("pointsEmpty").hidden = visible.length > 0;
+    text("pointsEmpty", points.length ? "No points match these filters." : "No point values are available yet.");
+    text("filteredCount", visible.length + " of " + points.length + " points");
+  }
+  ["pointSearch", "qualityFilter", "typeFilter"].forEach(id => $(id).addEventListener("input", renderPoints));
+  function updateReceivedTime() {
+    if (!lastPointsTime) return;
+    const age = Math.max(0, (Date.now() - lastPointsTime) / 1000);
+    text("pointsUpdated", "Last received " + new Date(lastPointsTime).toLocaleTimeString() + " · " + duration(age) + " ago. Values retain their reported quality.");
+    if (age > 15 && !restarting) { badge("pointsLiveBadge", "Updates delayed", "warn"); $("pointTableWrap").classList.add("offline-table"); }
+  }
+  function scheduleRefresh(delay) { clearTimeout(refreshTimer); if (!saving && !restarting) refreshTimer = setTimeout(refresh, delay); }
+  async function refresh() {
+    if (refreshing || saving || restarting) return;
+    refreshing = true; $("refreshButton").disabled = true;
+    try {
+      const status = await api("/api/status"); renderStatus(status);
+      const received = await api("/api/points");
+      if (!Array.isArray(received)) throw new Error("The gateway returned an unexpected point list.");
+      points = received; lastPointsTime = Date.now(); renderPoints(); updateReceivedTime();
+      badge("pointsLiveBadge", "Updating every 5 s", "good"); $("pointTableWrap").classList.remove("offline-table");
+      if (savedConfig?.config_error) message("globalMessage", "Configuration: " + savedConfig.config_error, "warn");
+      else message("globalMessage", "");
+      retryDelay = 5000;
+    } catch (error) {
+      connection("Connection lost", "warn"); badge("pointsLiveBadge", "Updates paused", "warn"); $("pointTableWrap").classList.add("offline-table");
+      message("globalMessage", error.message + " Displayed values are from the last successful update. Retrying automatically.", "warn");
+      retryDelay = Math.min(retryDelay * 2, 30000);
+    } finally { refreshing = false; $("refreshButton").disabled = false; scheduleRefresh(retryDelay); }
+  }
+  $("refreshButton").addEventListener("click", () => { clearTimeout(refreshTimer); if (!savedConfig) initialize(); else refresh(); });
+  window.addEventListener("beforeunload", event => { if (!saving && !restarting && dirty()) { event.preventDefault(); event.returnValue = ""; } });
+  async function initialize() {
+    $("refreshButton").disabled = true;
+    try {
+      const available = await api("/api/profiles");
+      if (!Array.isArray(available)) throw new Error("The gateway returned an unexpected profile list.");
+      profiles = available; const options = document.createDocumentFragment();
+      profiles.forEach(profile => { const option = document.createElement("option"); option.value = profile.id; option.textContent = profile.name; options.append(option); });
+      $("profile").replaceChildren(options);
+      populateConfig(await api("/api/config")); await refresh();
+    } catch (error) { message("globalMessage", "Could not load configuration: " + error.message + " Use Refresh to try again.", "error"); connection("Unavailable", "warn"); }
+    finally { $("refreshButton").disabled = false; }
+  }
+  text("gatewayHost", location.hostname || "ESP32-P4");
+  setInterval(updateReceivedTime, 1000);
+  initialize();
+})();
+</script>
+</body>
+</html>

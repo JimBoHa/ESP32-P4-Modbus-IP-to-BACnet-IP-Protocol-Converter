@@ -36,3 +36,10 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION
 OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
 CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+## Native configuration tests
+
+`third_party/cJSON` pins cJSON **1.7.19**, commit
+`c859b25da02955fef659d658b8f324b5cde87be3`, the same version supplied by
+ESP-IDF 5.5.4. Native configuration tests use this MIT-licensed submodule;
+firmware uses the ESP-IDF component. Preserve its `LICENSE` file.

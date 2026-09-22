@@ -1,5 +1,6 @@
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -7,7 +8,6 @@
 #include "esp_app_desc.h"
 #include "esp_eth.h"
 #include "esp_event.h"
-#include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_task_wdt.h"
@@ -19,15 +19,26 @@
 #include "sdkconfig.h"
 #include "gateway_bacnet.h"
 #include "gateway_poll.h"
+#include "gateway_web.h"
 
 static const char *TAG = "ats_gateway";
 static SemaphoreHandle_t lock;
 static esp_netif_t *ethernet;
 static bool network_up;
 static uint32_t network_generation;
+static uint32_t published_generation;
 static esp_netif_ip_info_t network_info;
 static gateway_poll_t published;
 static gateway_bacnet_stats_t published_bacnet;
+static gateway_config_t settings;
+static custom_map_t custom_map;
+static custom_poll_t published_custom;
+static char config_error[192];
+static const ats_point_def_t *active_points;
+static size_t active_count;
+
+/* Configuration and catalog remain immutable until the requested reboot. */
+static bool is_custom(void) { return settings.profile == GW_PROFILE_CUSTOM; }
 
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
 
@@ -40,7 +51,7 @@ static void network_event(void *arg, esp_event_base_t base, int32_t id, void *da
         network_up = true;
         ++network_generation;
         ESP_LOGI(TAG, "IPv4 " IPSTR "; BACnet device %d, UDP %d", IP2STR(&network_info.ip),
-                 CONFIG_GW_DEVICE_INSTANCE, CONFIG_GW_BACNET_PORT);
+                 (int)settings.device_instance, settings.bacnet_port);
     } else if ((base == ETH_EVENT && (id == ETHERNET_EVENT_DISCONNECTED || id == ETHERNET_EVENT_STOP)) ||
                (base == IP_EVENT && id == IP_EVENT_ETH_LOST_IP)) {
         network_up = false;
@@ -54,11 +65,13 @@ static void poll_task(void *arg)
 {
     (void)arg;
     static gateway_poll_t poller;
+    static custom_poll_t custom;
     gateway_poll_init(&poller);
+    custom_poll_init(&custom, &custom_map);
     gateway_poll_config_t config = {
-        .host = CONFIG_GW_MODBUS_HOST, .port = CONFIG_GW_MODBUS_PORT,
-        .unit = CONFIG_GW_MODBUS_UNIT, .expected_firmware = CONFIG_GW_EXPECTED_FIRMWARE,
-        .expected_mac_fragment = CONFIG_GW_EXPECTED_MAC_FRAGMENT,
+        .host = settings.modbus_host, .port = settings.modbus_port,
+        .unit = settings.modbus_unit, .expected_firmware = settings.expected_firmware,
+        .expected_mac_fragment = settings.expected_mac_fragment,
     };
     bool previous_up = false;
     uint32_t generation = 0;
@@ -70,9 +83,13 @@ static void poll_task(void *arg)
         xSemaphoreGive(lock);
         if ((previous_up && !up) || (up && changed != generation)) {
             gateway_poll_offline(&poller, now_ms());
-            poller.next_request_ms = now_ms();
+            custom_poll_offline(&custom, &custom_map, now_ms());
+            poller.next_request_ms = custom.next_request_ms = now_ms();
         }
-        if (up && gateway_poll_step(&poller, &config, now_ms())) {
+        if (up && !config_error[0] && is_custom()) {
+            custom_poll_step(&custom, &custom_map, settings.modbus_host,
+                             settings.modbus_port, settings.modbus_unit, now_ms());
+        } else if (up && !config_error[0] && gateway_poll_step(&poller, &config, now_ms())) {
             if (poller.consecutive_failures == 1) {
                 ESP_LOGW(TAG, "ATS offset %u: %s", poller.last_offset,
                          mb_error_string(poller.last_result.error));
@@ -81,9 +98,12 @@ static void poll_task(void *arg)
         xSemaphoreTake(lock, portMAX_DELAY);
         if (!network_up || network_generation != changed) {
             gateway_poll_offline(&poller, now_ms());
-            poller.next_request_ms = now_ms();
+            custom_poll_offline(&custom, &custom_map, now_ms());
+            poller.next_request_ms = custom.next_request_ms = now_ms();
         }
         published = poller;
+        published_custom = custom;
+        published_generation = changed;
         xSemaphoreGive(lock);
         previous_up = up;
         generation = changed;
@@ -92,10 +112,25 @@ static void poll_task(void *arg)
     }
 }
 
+/* Decode while holding the small shared snapshot lock; no I/O or allocation.
+ * ATS electrical preset uses the same full decoder/qualification dependencies. */
+static void snapshot_values(ats_value_t *values)
+{
+    uint64_t now = now_ms();
+    xSemaphoreTake(lock, portMAX_DELAY);
+    if (is_custom()) custom_poll_snapshot(&published_custom, &custom_map, now, values);
+    else ats_model_decode_all(&published.model, now, values);
+    bool up = network_up && published_generation == network_generation;
+    xSemaphoreGive(lock);
+    if (!up || config_error[0]) for (size_t i = 0; i < active_count; ++i) {
+        values[i].quality = ATS_QUALITY_COMM;
+        values[i].quality_reason = config_error[0] ? "Configuration requires repair" : "Ethernet unavailable";
+    }
+}
+
 static void bacnet_task(void *arg)
 {
     (void)arg;
-    static ats_model_t model;
     static ats_value_t values[ATS_POINT_COUNT];
     bool started = false;
     uint32_t generation = UINT32_MAX;
@@ -106,23 +141,21 @@ static void bacnet_task(void *arg)
         bool up = network_up;
         uint32_t changed = network_generation;
         esp_netif_ip_info_t info = network_info;
-        model = published.model;
         xSemaphoreGive(lock);
         uint64_t now = now_ms();
-        if (!up) {
-            for (size_t i = 0; i < ATS_BLOCK_COUNT; ++i)
-                ats_model_fail_block(&model, ats_scan_blocks[i].offset,
-                                     ats_scan_blocks[i].count, now);
-        }
         if (!started && up) {
             gateway_bacnet_config_t config = {
-                .device_instance = CONFIG_GW_DEVICE_INSTANCE,
-                .device_name = CONFIG_GW_DEVICE_NAME,
+                .device_instance = settings.device_instance,
+                .device_name = settings.device_name,
                 .firmware_version = esp_app_get_description()->version,
-                .location = "Automatic transfer switch",
+                .location = "Modbus TCP gateway",
+                .points = active_points, .point_count = active_count,
+                .model_name = "ESP32-P4 Modbus BACnet",
+                .description = is_custom() ? "Read-only custom CSV map" : "Read-only Kohler MPAC1500 ATS",
+                .database_revision = settings.revision,
                 .vendor_id = CONFIG_GW_VENDOR_ID,
                 .local_ip = info.ip.addr, .netmask = info.netmask.addr,
-                .gateway = info.gw.addr, .udp_port = CONFIG_GW_BACNET_PORT,
+                .gateway = info.gw.addr, .udp_port = settings.bacnet_port,
                 .dhcp_enabled = CONFIG_GW_STATIC_IP[0] == '\0',
             };
             const char *peers[] = {CONFIG_GW_IAM_PEER1, CONFIG_GW_IAM_PEER2};
@@ -130,7 +163,7 @@ static void bacnet_task(void *arg)
                 struct in_addr peer;
                 if (peers[i][0] && inet_pton(AF_INET, peers[i], &peer) == 1) {
                     config.peers[config.peer_count++] = (gateway_bacnet_peer_t){
-                        .ip = peer.s_addr, .port = CONFIG_GW_BACNET_PORT};
+                        .ip = peer.s_addr, .port = settings.bacnet_port};
                 }
             }
             started = gateway_bacnet_init(&config, now);
@@ -145,7 +178,7 @@ static void bacnet_task(void *arg)
                 } else generation = changed;
             }
             if (now >= next_update) {
-                ats_model_decode_all(&model, now, values);
+                snapshot_values(values);
                 gateway_bacnet_update(values);
                 next_update = now + 200;
             }
@@ -162,19 +195,7 @@ static void bacnet_task(void *arg)
     }
 }
 
-static esp_err_t json_reply(httpd_req_t *request, cJSON *json)
-{
-    char *text = cJSON_PrintUnformatted(json);
-    cJSON_Delete(json);
-    if (!text) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-    httpd_resp_set_type(request, "application/json");
-    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
-    esp_err_t err = httpd_resp_send(request, text, HTTPD_RESP_USE_STRLEN);
-    free(text);
-    return err;
-}
-
-static esp_err_t status_handler(httpd_req_t *request)
+static cJSON *status_json(void)
 {
     gateway_bacnet_stats_t stats;
     uint32_t requests, successes, failures;
@@ -183,66 +204,73 @@ static esp_err_t status_handler(httpd_req_t *request)
     const char *reason;
     xSemaphoreTake(lock, portMAX_DELAY);
     stats = published_bacnet;
-    requests = published.requests; successes = published.successes; failures = published.failures;
-    last = published.last_success_ms; up = network_up;
-    profile = published.profile_valid; reason = published.profile_status;
+    if (is_custom()) {
+        requests = published_custom.requests; successes = published_custom.successes;
+        failures = published_custom.failures; last = published_custom.last_success_ms;
+        profile = false; reason = "User-defined CSV; controller identity is not checked";
+    } else {
+        requests = published.requests; successes = published.successes; failures = published.failures;
+        last = published.last_success_ms; profile = published.profile_valid; reason = published.profile_status;
+    }
+    up = network_up;
     xSemaphoreGive(lock);
     cJSON *j = cJSON_CreateObject();
-    if (!j) return ESP_ERR_NO_MEM;
+    if (!j) return NULL;
     cJSON_AddStringToObject(j, "firmware", esp_app_get_description()->version);
     cJSON_AddStringToObject(j, "board", "Waveshare ESP32-P4-POE-ETH");
     cJSON_AddNumberToObject(j, "uptime_seconds", now_ms() / 1000.0);
     cJSON_AddBoolToObject(j, "ethernet_up", up);
     cJSON_AddBoolToObject(j, "profile_verified", profile);
     cJSON_AddStringToObject(j, "profile_status", reason ? reason : "Initializing");
-    cJSON_AddStringToObject(j, "modbus_host", CONFIG_GW_MODBUS_HOST);
-    cJSON_AddNumberToObject(j, "modbus_unit", CONFIG_GW_MODBUS_UNIT);
+    cJSON_AddStringToObject(j, "modbus_host", settings.modbus_host);
+    cJSON_AddStringToObject(j, "profile", gateway_profile_id(settings.profile));
+    cJSON_AddStringToObject(j, "config_error", config_error);
+    cJSON_AddNumberToObject(j, "point_count", active_count);
+    cJSON_AddNumberToObject(j, "modbus_unit", settings.modbus_unit);
     cJSON_AddNumberToObject(j, "modbus_requests", requests);
     cJSON_AddNumberToObject(j, "modbus_successful_responses", successes);
     cJSON_AddNumberToObject(j, "modbus_failures", failures);
     if (last) cJSON_AddNumberToObject(j, "last_modbus_response_age_seconds", (now_ms() - last) / 1000.0);
     else cJSON_AddNullToObject(j, "last_modbus_response_age_seconds");
-    cJSON_AddNumberToObject(j, "bacnet_device_instance", CONFIG_GW_DEVICE_INSTANCE);
+    cJSON_AddNumberToObject(j, "bacnet_device_instance", settings.device_instance);
     cJSON_AddNumberToObject(j, "bacnet_received_packets", stats.received_packets);
     cJSON_AddNumberToObject(j, "good_points", stats.good_points);
     cJSON_AddNumberToObject(j, "fault_points", stats.fault_points);
     cJSON_AddBoolToObject(j, "read_only", true);
-    return json_reply(request, j);
+    return j;
 }
 
-static esp_err_t points_handler(httpd_req_t *request)
+static cJSON *points_json(void)
 {
-    ats_model_t model;
     ats_value_t *values = calloc(ATS_POINT_COUNT, sizeof(*values));
-    if (!values) return httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-    xSemaphoreTake(lock, portMAX_DELAY);
-    model = published.model;
-    bool up = network_up;
-    xSemaphoreGive(lock);
-    if (!up) {
-        for (size_t i = 0; i < ATS_BLOCK_COUNT; ++i)
-            ats_model_fail_block(&model, ats_scan_blocks[i].offset,
-                                 ats_scan_blocks[i].count, now_ms());
-    }
-    ats_model_decode_all(&model, now_ms(), values);
+    if (!values) return NULL;
+    snapshot_values(values);
     cJSON *j = cJSON_CreateArray();
-    if (!j) { free(values); return ESP_ERR_NO_MEM; }
-    for (size_t i = 0; i < ATS_POINT_COUNT; ++i) {
+    if (!j) { free(values); return NULL; }
+    for (size_t i = 0; i < active_count; ++i) {
         cJSON *p = cJSON_CreateObject();
-        if (!p) { free(values); cJSON_Delete(j); return ESP_ERR_NO_MEM; }
-        cJSON_AddStringToObject(p, "name", ats_points[i].name);
-        cJSON_AddNumberToObject(p, "object_type", ats_points[i].object_type);
-        cJSON_AddNumberToObject(p, "instance", ats_points[i].instance);
-        cJSON_AddNumberToObject(p, "modbus_offset", ats_points[i].offset);
+        if (!p) { free(values); cJSON_Delete(j); return NULL; }
+        cJSON_AddStringToObject(p, "name", active_points[i].name);
+        cJSON_AddNumberToObject(p, "object_type", active_points[i].object_type);
+        cJSON_AddNumberToObject(p, "instance", active_points[i].instance);
+        cJSON_AddNumberToObject(p, "modbus_offset", active_points[i].offset);
+        if (is_custom()) {
+            cJSON_AddNumberToObject(p, "modbus_function", custom_map.points[i].function);
+            cJSON_AddNumberToObject(p, "poll_ms", custom_map.points[i].poll_ms);
+            cJSON_AddNumberToObject(p, "stale_ms", custom_map_stale_ms(&custom_map, i));
+        }
+        if (values[i].last_good_ms)
+            cJSON_AddNumberToObject(p, "sample_age_seconds", (now_ms() - values[i].last_good_ms) / 1000.0);
+        else cJSON_AddNullToObject(p, "sample_age_seconds");
         cJSON_AddStringToObject(p, "quality", ats_quality_name(values[i].quality));
         cJSON_AddStringToObject(p, "quality_reason", values[i].quality_reason);
-        if (ats_points[i].object_type == 40) cJSON_AddStringToObject(p, "value", values[i].text);
+        if (active_points[i].object_type == 40) cJSON_AddStringToObject(p, "value", values[i].text);
         else if (isfinite(values[i].numeric)) cJSON_AddNumberToObject(p, "value", values[i].numeric);
         else cJSON_AddNullToObject(p, "value");
         cJSON_AddItemToArray(j, p);
     }
     free(values);
-    return json_reply(request, j);
+    return j;
 }
 
 void app_main(void)
@@ -250,7 +278,22 @@ void app_main(void)
     lock = xSemaphoreCreateMutex();
     configASSERT(lock);
     gateway_poll_init(&published);
+    gateway_config_defaults(&settings);
+    snprintf(settings.modbus_host, sizeof(settings.modbus_host), "%s", CONFIG_GW_MODBUS_HOST);
+    snprintf(settings.device_name, sizeof(settings.device_name), "%s", CONFIG_GW_DEVICE_NAME);
+    settings.modbus_port = CONFIG_GW_MODBUS_PORT;
+    settings.modbus_unit = CONFIG_GW_MODBUS_UNIT;
+    settings.device_instance = CONFIG_GW_DEVICE_INSTANCE;
+    settings.bacnet_port = CONFIG_GW_BACNET_PORT;
+    settings.expected_firmware = CONFIG_GW_EXPECTED_FIRMWARE;
+    settings.expected_mac_fragment = CONFIG_GW_EXPECTED_MAC_FRAGMENT;
     ESP_ERROR_CHECK(nvs_flash_init());
+    gateway_web_load(&settings, &custom_map, config_error, sizeof(config_error));
+    if (config_error[0]) ESP_LOGE(TAG, "%s; polling disabled until repaired", config_error);
+    active_points = is_custom() ? custom_map.defs : ats_points;
+    active_count = is_custom() ? custom_map.count :
+        settings.profile == GW_PROFILE_ELECTRICAL ? GW_ELECTRICAL_POINT_COUNT : ATS_POINT_COUNT;
+    custom_poll_init(&published_custom, &custom_map);
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_config_t nc = ESP_NETIF_DEFAULT_ETH();
@@ -286,19 +329,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_LOST_IP, network_event, NULL));
     configASSERT(xTaskCreate(poll_task, "ats_modbus", 8192, NULL, 4, NULL) == pdPASS);
     configASSERT(xTaskCreate(bacnet_task, "ats_bacnet", 12288, NULL, 5, NULL) == pdPASS);
-    httpd_config_t http_config = HTTPD_DEFAULT_CONFIG();
-    http_config.stack_size = 8192;
-    http_config.max_open_sockets = 3;
-    http_config.lru_purge_enable = true;
-    httpd_handle_t http;
-    ESP_ERROR_CHECK(httpd_start(&http, &http_config));
-    const httpd_uri_t handlers[] = {
-        {.uri="/", .method=HTTP_GET, .handler=status_handler},
-        {.uri="/api/status", .method=HTTP_GET, .handler=status_handler},
-        {.uri="/api/points", .method=HTTP_GET, .handler=points_handler},
-    };
-    for (size_t i=0; i<sizeof(handlers)/sizeof(handlers[0]); ++i)
-        ESP_ERROR_CHECK(httpd_register_uri_handler(http, &handlers[i]));
+    gateway_web_start(&settings, &custom_map, config_error, status_json, points_json);
     ESP_ERROR_CHECK(esp_eth_start(driver));
-    ESP_LOGI(TAG, "Read-only ATS gateway started; no GPIO field wiring required");
+    ESP_LOGI(TAG, "Read-only Modbus gateway started; configure profiles and CSV maps in the web interface");
 }
