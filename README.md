@@ -16,10 +16,15 @@ integer/float values, bits, states and text. See
 
 The board matches [Amazon ASIN B0FN4FX21T](https://www.amazon.com/dp/B0FN4FX21T).
 [Waveshare documentation](https://docs.waveshare.com/ESP32-P4-ETH) specifies
-32 MB flash/PSRAM and 100 Mbps Ethernet. The original ATS protocol path passed
-a workstation test against the real controller. New web/CSV behavior is tested
-locally; **physical ESP32-P4 flashing, Ethernet and Metasys commissioning remain
-pending**. See [validation](docs/VALIDATION.md) for the exact test scope.
+32 MB flash/PSRAM and 100 Mbps Ethernet. Version 0.3.0 was deployed to the
+physical board through signed Ethernet OTA and reached a valid boot state.
+Real ATS polling and an independent BACnet client passed, including discovery,
+1,683 property reads and COV across all four point types. The actual HTTPS
+console also validated and saved a three-point custom CSV, reconnected after
+restart, and published its readings over BACnet; the full ATS profile was
+restored afterward and standard-port broadcast discovery passed. Metasys UI
+commissioning, power-loss/cable-pull testing and a 24-hour soak remain pending.
+See [validation](docs/VALIDATION.md) for the exact evidence and limits.
 
 ## Connections
 

@@ -100,8 +100,23 @@ For a new board initially flashed with the dual-slot layout, erased OTA metadata
 causes one verified boot selection and restart before normal pending-image
 health validation. The default factory-only HTTP build does not use this path.
 
-A successful boot does not prove a power-loss test or long-duration soak.
-See [validation](VALIDATION.md) for physical evidence and remaining limits.
+## Physical deployment evidence
+
+On 2026-09-22, the signed 0.3.0 converter built from `d13fdfed031e` was deployed
+over Ethernet to the physical board. The 921,600-byte image reached **ota_0,
+VALID**, preserving the previous ota_1 application. Its SHA-256 was
+`c33c3d893073d906fa2c1d1faf5faae26bf3bc6f72bc9f9246dd917f2ba86ccd`.
+Real ATS polling and an independent LAN BACnet probe passed after the update.
+The actual HTTPS console also saved a three-point custom CSV and reconnected
+after restart. Its BACnet values passed an independent check, then the full
+ATS profile was restored by authenticated save/reboot. Final revision 4 cleared
+the temporary CSV; standard-port broadcast BACnet discovery and readings passed
+after startup polling completed.
+Anonymous and viewer mutation attempts returned 401/403 without changes.
+
+This successful migration does not establish power-loss recovery, a forced
+physical rollback, cable-pull behavior, a 24-hour soak or Metasys UI
+commissioning. See [validation](VALIDATION.md) for the detailed evidence.
 
 ESP-IDF references: [OTA and rollback](https://docs.espressif.com/projects/esp-idf/en/v5.5.4/esp32p4/api-reference/system/ota.html),
 [partition API source](https://github.com/espressif/esp-idf/blob/v5.5.4/components/esp_partition/include/esp_partition.h).

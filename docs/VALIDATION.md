@@ -2,12 +2,13 @@
 
 ## Version 0.3.0: optional signed HTTPS updates, 2026-09-22
 
-- ESP-IDF 5.5.4 signed ESP32-P4 target build passes. Public defaults retain
-  the factory/HTTP/USB layout; the optional signed dual-slot HTTPS build uses
-  the migration procedure in [OTA.md](OTA.md).
-- Ten native test executables and twelve TCP loopback tests pass. The HTTPS
-  integration harness covers the production web handlers with mutation
-  authorization enabled; these remain host tests.
+- ESP-IDF 5.5.4 signed OTA and default factory ESP32-P4 target builds pass.
+  Public defaults retain the factory/HTTP/USB layout; the optional signed
+  dual-slot HTTPS build uses the migration procedure in [OTA.md](OTA.md).
+- Eleven native test executables and twelve TCP loopback tests pass. The OTA
+  request harness covers 24 isolated cases, with startup validation also
+  tested. The HTTPS integration harness covers the production web handlers
+  with mutation authorization enabled; these remain host tests.
 - Sixteen Chromium browser scenarios pass, adding protected CSV validation
   and configuration saves, anonymous reads, missing/invalid-key behavior,
   exact bearer headers, memory-only credentials, and clearing credentials on
@@ -17,10 +18,51 @@
   pending-image acceptance, separated persistent configuration, shared HTTPS
   mutation gating, and numeric-address HTTP redirects.
 
-Physical Ethernet migration, post-update BACnet/Modbus checks, retained
-configuration across power interruption, and long-duration operation remain
-pending. A signed build and host tests alone do not establish those results.
+### Physical Ethernet deployment and real ATS checks
 
+The signed 0.3.0 image built from source `d13fdfed031e` was installed over
+Ethernet on the physical ESP32-P4. The signed file is **921,600 bytes**. Its ESP application-image digest is
+`c33c3d893073d906fa2c1d1faf5faae26bf3bc6f72bc9f9246dd917f2ba86ccd`.
+The complete signed-file SHA-256 is
+`a7bd222645a5ad48b35b08e60d6d34918057ac18006e6bb08c9c8b9b989a4c64`.
+The device reported **ota_0, VALID**; the previous application in ota_1 was
+preserved. This is actual device evidence, separate from the host tests above.
+
+- Configuration loaded with an empty `config_error`, and the old MPAC1500
+  controller profile verified. The initial snapshot contained 164 points:
+  144 good and 20 faulted, unverified or inapplicable. It recorded 53 Modbus
+  requests, 53 successful replies and no failures.
+- The physical ATS returned line voltages of **488.5 / 486.5 / 486.5 V** and
+  frequency **60 Hz**. These are protocol readings, not a contemporaneous
+  manual display comparison.
+- An independent BACpypes3 client on the LAN passed discovery and the indexed
+  list of 172 objects, **1,683 ReadPropertyMultiple properties**, and COV for
+  all four point types. Unverified current retained its fault qualification.
+- Chromium exercised the actual HTTPS console: it loaded the full 164-point
+  profile, accepted the memory-only administrator key, validated a three-point
+  custom CSV preview, saved it, and automatically reconnected after restart.
+  The page rendered three good points; the resulting screenshot was inspected.
+- An independent BACnet check of that custom profile found 11 objects (three
+  custom points plus eight gateway/device objects). AI 2101 reported 488.5 V,
+  AI 2102 reported 60 Hz, and BI 2103 reported preferred source available as
+  active, all with `no-fault-detected` reliability. The full 164-point ATS
+  profile was then restored by authenticated save/reboot. Final configuration
+  revision **4** has no retained test CSV (`custom_point_count: 0`), and
+  controller verification passed again. This proves persistence across a
+  commanded restart, not an interrupted flash write.
+- After restoration, a standard-port LocalBroadcast Who-Is on UDP 47808
+  discovered Device 75181. The final probe confirmed the restored 172 objects,
+  488.5 V and 60 Hz with `no-fault-detected` reliability after initial polling
+  completed. The final status at 32 seconds uptime showed 29 requests, 29
+  successful replies and no failures.
+- Actual HTTPS requests with anonymous or viewer credentials could not mutate
+  configuration, validate a CSV, upload firmware or reboot: the device returned
+  401/403 responses with no mutations.
+
+Physical power-loss/cable-pull testing, configuration persistence under power
+interruption, a 24-hour soak and Metasys UI commissioning remain untested.
+Acceptance of this signed image does not prove a forced physical rollback.
+Raw site addresses and credential-bearing reports remain outside public docs.
 
 ## Version 0.2.0: web profiles and CSV maps, 2026-09-22
 
@@ -56,10 +98,10 @@ pending. A signed build and host tests alone do not establish those results.
   were inspected. No JavaScript errors or external requests were observed.
   These browser fixtures do not replace the production backend tests above.
 
-The new web/CSV version has not been flashed on an ESP32-P4. Physical USB,
-Ethernet, flash persistence under power interruption, task/heap stability and
-Metasys commissioning remain pending. The prior real-ATS evidence below belongs
-to version 0.1.0; it is not a claim that the new web paths ran on field hardware.
+At completion of the 0.2.0 test record, that version had not been flashed on
+an ESP32-P4. Its tests established host behavior only. The physical 0.3.0
+evidence above supersedes that limitation for the paths explicitly exercised;
+power-loss, sustained-operation and Metasys UI checks remain separate.
 
 ## Version 0.1.0 baseline, 2026-09-22
 
@@ -111,13 +153,13 @@ belong to the corrected-source repeat.
 
 Raw site reports and addresses remain in the ignored `private/` folder.
 
-## Not yet tested
+## Remaining hardware acceptance
 
-At the 0.1.0 baseline, the ESP32-P4 was not attached. USB identity/revision detection, recovery
-backup, flashing, real Ethernet PHY/DHCP/link recovery, sustained memory/task
-behavior, PoE/power interruption, and Metasys device/field-point discovery
-remain hardware acceptance work. Native tests and a successful target build
-do not establish those results. No BTL certification is claimed.
+The physical 0.3.0 Ethernet deployment is recorded above. New-board USB
+installation, cable-pull/DHCP recovery, sustained memory/task behavior, power
+interruption during configuration writes, and Metasys device/field-point UI
+commissioning are not established by these results. No BTL certification is
+claimed.
 
 ## Reproduction
 
