@@ -43,3 +43,12 @@ CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 `c859b25da02955fef659d658b8f324b5cde87be3`, the same version supplied by
 ESP-IDF 5.5.4. Native configuration tests use this MIT-licensed submodule;
 firmware uses the ESP-IDF component. Preserve its `LICENSE` file.
+
+## Signed Ethernet update components
+
+`main/ota_auth.*`, `main/ota_health.*`, `main/dashboard_redirect.*`, and the
+signed-update host tools are copied or adapted from
+[JimBoHa/esp32-p4-bacnet-switches](https://github.com/JimBoHa/esp32-p4-bacnet-switches)
+(commit `9b2f89c6b582`). `main/gateway_ota.c` adapts that project's updater
+without its switch/GPIO handlers. Public certificate and signing-key pins
+retain the existing deployment identity; private keys/tokens are not included.

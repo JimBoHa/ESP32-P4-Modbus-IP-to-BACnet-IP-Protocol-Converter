@@ -1,6 +1,7 @@
 # Configure the gateway in a browser
 
-Open the gateway’s IPv4 address in a browser. The console is self-contained: it
+Open the gateway’s HTTPS address in a browser for builds with signed Ethernet
+updates. Generic builds without that feature may serve HTTP instead. The console is self-contained: it
 uses no external scripts, fonts, analytics, or CDN. Overview and Live points
 refresh every five seconds. A lost connection leaves the last received values
 visible, marks updates paused, and retries with a bounded delay. The point’s
@@ -8,6 +9,21 @@ reported quality and reason remain visible separately from browser connectivity.
 
 The Configuration tab loads the saved settings once. Background polling does
 not overwrite unsaved edits. “Discard changes” restores the loaded settings.
+
+## Administrator access
+
+The signed-update build requires an administrator key for **CSV validation**
+and **Save and restart**. Enter it in the Configuration tab’s masked Admin key
+field. The key stays in this page’s memory and is sent as a bearer authorization
+header only on those protected POST requests. It is not part of the saved
+configuration or CSV, and the page never puts it in browser storage, cookies,
+a URL, or displayed text. **Forget key**, reloading, or leaving the page clears
+it; a successful gateway restart within this open page retains it.
+
+Status, points, profile lists, and configuration reads remain available without
+a key. Builds reporting `authentication_required:false` omit the key panel and
+authorization header. `X-Gateway-Request: 1` remains required on mutations in
+both modes; it does not replace administrator authentication.
 
 ## Profiles and connections
 
@@ -60,7 +76,9 @@ per label and 512 characters for the combined field. Point names accept up to
 characters. ASCII length is at most 20 characters. Poll intervals range from
 1,000 to 3,600,000 milliseconds. The stale limit in milliseconds is
 `max(3 × poll_ms, 3 × point_count × 250 + 1200, 5000)`.
-The gateway validates compatible combinations and numeric limits.
+The gateway validates compatible combinations and numeric limits. The `units`
+field uses BACnet Engineering Units numbers: volts = `5`, hertz = `27`, and
+degrees Celsius = `62`.
 
 The Saved map link downloads the stored CSV. Saving other settings without
 uploading a new file preserves an existing custom map. Selecting “Keep saved
@@ -81,6 +99,15 @@ physical equipment readings, or Metasys import.
 All configuration mutations use JSON with `X-Gateway-Request: 1`. The header is
 a request-boundary check, not a login credential. The page renders API and CSV
 strings as text; it does not execute embedded HTML.
+
+## Firmware updates over Ethernet
+
+Use [`tools/ota_client.py`](../tools/ota_client.py) for signed Ethernet updates;
+only its `status`, `upload`, and `reboot` commands apply to this converter.
+[OTA.md](OTA.md) gives the exact build and upload procedure. Configuration CSV
+upload changes the register map and does
+not install firmware. This console does not upload firmware images or expose
+the signing key or administrator credential.
 
 ## Browser verification
 

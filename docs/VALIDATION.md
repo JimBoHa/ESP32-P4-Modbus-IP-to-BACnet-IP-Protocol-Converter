@@ -1,5 +1,27 @@
 # Validation record
 
+## Version 0.3.0: optional signed HTTPS updates, 2026-09-22
+
+- ESP-IDF 5.5.4 signed ESP32-P4 target build passes. Public defaults retain
+  the factory/HTTP/USB layout; the optional signed dual-slot HTTPS build uses
+  the migration procedure in [OTA.md](OTA.md).
+- Ten native test executables and twelve TCP loopback tests pass. The HTTPS
+  integration harness covers the production web handlers with mutation
+  authorization enabled; these remain host tests.
+- Sixteen Chromium browser scenarios pass, adding protected CSV validation
+  and configuration saves, anonymous reads, missing/invalid-key behavior,
+  exact bearer headers, memory-only credentials, and clearing credentials on
+  reload or page exit. Desktop and mobile screenshots were inspected.
+- Independent source review checked the root integration: early rollback
+  deadline, task/HTTPS/network health conditions, configuration errors blocking
+  pending-image acceptance, separated persistent configuration, shared HTTPS
+  mutation gating, and numeric-address HTTP redirects.
+
+Physical Ethernet migration, post-update BACnet/Modbus checks, retained
+configuration across power interruption, and long-duration operation remain
+pending. A signed build and host tests alone do not establish those results.
+
+
 ## Version 0.2.0: web profiles and CSV maps, 2026-09-22
 
 - ESP-IDF 5.5.4 ESP32-P4 build passes. The image fits the existing 4 MiB
@@ -91,7 +113,7 @@ Raw site reports and addresses remain in the ignored `private/` folder.
 
 ## Not yet tested
 
-The ESP32-P4 is not attached yet. USB identity/revision detection, recovery
+At the 0.1.0 baseline, the ESP32-P4 was not attached. USB identity/revision detection, recovery
 backup, flashing, real Ethernet PHY/DHCP/link recovery, sustained memory/task
 behavior, PoE/power interruption, and Metasys device/field-point discovery
 remain hardware acceptance work. Native tests and a successful target build

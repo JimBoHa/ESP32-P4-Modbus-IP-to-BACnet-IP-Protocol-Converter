@@ -72,3 +72,22 @@ endforeach()
 add_executable(native_gateway ../tools/native_gateway.c ../main/gateway_poll.c)
 target_link_libraries(native_gateway PRIVATE gateway_core modbus Threads::Threads)
 target_compile_options(native_gateway PRIVATE -Wall -Wextra -Werror)
+
+add_executable(test_gateway_storage test_gateway_storage.c ../main/gateway_storage.c)
+target_include_directories(test_gateway_storage BEFORE PRIVATE storage_stubs ../main)
+target_compile_options(test_gateway_storage PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+add_test(NAME gateway_storage COMMAND test_gateway_storage)
+
+add_executable(test_gateway_web_https test_gateway_web.c ../main/gateway_web.c)
+target_include_directories(test_gateway_web_https BEFORE PRIVATE web_stubs)
+target_compile_definitions(test_gateway_web_https PRIVATE CONFIG_GW_OTA_ENABLED=1 CONFIG_GW_OTA_PORT=443)
+target_link_libraries(test_gateway_web_https PRIVATE gateway_config)
+target_compile_options(test_gateway_web_https PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+add_test(NAME gateway_web_https COMMAND test_gateway_web_https)
+
+add_executable(test_gateway_ota test_gateway_ota.c ../main/gateway_ota.c
+    ../main/ota_auth.c ../main/ota_health.c)
+target_include_directories(test_gateway_ota BEFORE PRIVATE ota_stubs ../main)
+target_link_libraries(test_gateway_ota PRIVATE cjson)
+target_compile_options(test_gateway_ota PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+add_test(NAME gateway_ota COMMAND test_gateway_ota)

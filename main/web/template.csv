@@ -1,5 +1,5 @@
 instance,name,object_type,function,address,data_type,byte_order,scale,offset,units,bit,states,length,poll_ms,description
-2001,Example-Voltage,AI,3,0,u16,AB,0.1,0,124,,,,2000,Example address only - replace using device manual
+2001,Example-Voltage,AI,3,0,u16,AB,0.1,0,5,,,,2000,Example address only - replace using device manual
 2002,Example-Temperature,AI,4,2,f32,ABCD,1,0,62,,,,2000,Example IEEE754 input register
 2003,Example-Alarm,BI,3,4,bit,AB,1,0,95,3,,,2000,Example bit 3 of holding register
 2004,Example-Running,BI,2,0,bool,,1,0,95,,,,2000,Example discrete input

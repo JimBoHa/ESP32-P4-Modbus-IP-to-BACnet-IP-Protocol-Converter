@@ -30,6 +30,7 @@
 </section>
 <section id="configPane" role="tabpanel" aria-labelledby="configTab" hidden>
 <form id="configForm"><fieldset id="configFields" disabled style="border:0;padding:0;margin:0;min-width:0"><div class="config-layout"><div>
+<div class="panel" id="adminPanel" hidden><div class="panel-head"><div><h2>Administrator access</h2><p class="subtle">Required to validate a CSV or save configuration.</p></div><span class="pill warn" id="adminBadge">Key required</span></div><div class="panel-body"><div class="field"><label for="adminKey">Admin key</label><input id="adminKey" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="256" aria-describedby="adminKeyHint" data-lpignore="true" data-1p-ignore><p class="hint" id="adminKeyHint">Kept only in this page’s memory. Reloading, closing the page, or selecting Forget key clears it. Status and point readings remain available without a key.</p></div><div class="row-actions" style="margin-top:12px"><button type="button" class="quiet" id="forgetKeyButton" disabled>Forget key</button></div></div></div>
 <div class="panel"><div class="panel-head"><div><h2><span class="section-number">01</span>Data profile</h2><p class="subtle">Choose the controller map or provide a custom CSV.</p></div><span class="pill" id="profileCount">— points</span></div><div class="panel-body"><div class="field"><label for="profile">Profile</label><select id="profile" name="profile" required><option value="">Loading profiles…</option></select></div><div class="profile-note"><h3 id="selectedProfileName">Choose a profile</h3><p id="selectedProfileDescription">Profile details will appear here.</p></div></div></div>
 <div class="panel"><div class="panel-head"><div><h2><span class="section-number">02</span>Modbus connection</h2><p class="subtle">The address of the source device.</p></div></div><div class="panel-body"><div class="form-grid three"><div class="field"><label for="modbus_host">Source IPv4 address</label><input id="modbus_host" name="modbus_host" type="text" inputmode="decimal" placeholder="192.168.1.50" maxlength="15" required autocomplete="off" spellcheck="false"><p class="hint">Enter the Modbus device address, not this gateway’s address.</p></div><div class="field"><label for="modbus_port">TCP port</label><input id="modbus_port" name="modbus_port" type="number" min="1" max="65535" step="1" required></div><div class="field"><label for="modbus_unit">Unit ID</label><input id="modbus_unit" name="modbus_unit" type="number" min="0" max="255" step="1" required></div></div><div id="atsIdentity"><details open><summary>MPAC1500 controller verification</summary><p>Both built-in profiles use the older MPAC1500 Section 13 ATS map. These settings identify the expected controller.</p><div class="form-grid"><div class="field"><label for="expected_firmware">Expected firmware word</label><input id="expected_firmware" name="expected_firmware" type="number" min="0" max="65535" step="1" required><p class="hint">Decimal raw word. Firmware 2.03 is 515 (0x0203).</p></div><div class="field"><label for="expected_mac_fragment">Expected MAC fragment</label><input id="expected_mac_fragment" name="expected_mac_fragment" type="number" min="0" max="32767" step="1" required><p class="hint">Decimal low 15 bits of the old-map MAC register. Zero disables this extra check.</p></div></div></details></div></div></div>
 <div class="panel"><div class="panel-head"><div><h2><span class="section-number">03</span>BACnet identity</h2><p class="subtle">How this gateway appears in your building system.</p></div></div><div class="panel-body"><div class="form-grid"><div class="field wide"><label for="device_name">Device name</label><input id="device_name" name="device_name" type="text" maxlength="95" required autocomplete="off" spellcheck="false"><p class="hint">1–95 printable ASCII characters. The prefix Gateway- is reserved.</p></div><div class="field"><label for="device_instance">Device instance</label><input id="device_instance" name="device_instance" type="number" min="0" max="4194302" step="1" required><p class="hint">Choose an instance unique on the BACnet network.</p></div><div class="field"><label for="bacnet_port">UDP port</label><input id="bacnet_port" name="bacnet_port" type="number" min="1" max="65535" step="1" required><p class="hint">Standard BACnet/IP port: 47808.</p></div></div></div></div>
@@ -50,6 +51,7 @@
   const numericFields = new Set(["modbus_port", "modbus_unit", "device_instance", "bacnet_port", "expected_firmware", "expected_mac_fragment"]);
   const typeNames = {0:"AI",3:"BI",13:"MSI",40:"CSV",analogInput:"AI",binaryInput:"BI",multiStateInput:"MSI",characterstringValue:"CSV"};
   let savedConfig = null, profiles = [], points = [], currentStatus = null;
+  let adminKey = "";
   let csvText = null, validatedCsv = null, validationResult = null, validationSequence = 0;
   let refreshing = false, saving = false, restarting = false, refreshTimer = null, retryDelay = 5000, lastPointsTime = 0;
 
@@ -96,9 +98,30 @@
       throw error;
     } finally { clearTimeout(timeout); }
   }
-  function post(path, data) {
-    return api(path, {method:"POST", headers:{"Content-Type":"application/json", "X-Gateway-Request":"1"}, body:JSON.stringify(data)});
+  function authenticationRequired() { return savedConfig?.authentication_required === true; }
+  function authenticationReady() { return !authenticationRequired() || adminKey.length > 0; }
+  function updateAuthentication() {
+    $("adminPanel").hidden = !authenticationRequired();
+    badge("adminBadge", adminKey ? "Key entered" : "Key required", adminKey ? "" : "warn");
+    $("forgetKeyButton").disabled = !adminKey;
+    if (csvText !== null) $("validateButton").disabled = !authenticationReady() || saving || restarting;
+    updateSaveState();
   }
+  function forgetAdminKey() {
+    adminKey = ""; $("adminKey").value = ""; updateAuthentication();
+  }
+  function post(path, data) {
+    const headers = {"Content-Type":"application/json", "X-Gateway-Request":"1"};
+    if (authenticationRequired()) {
+      if (!adminKey) throw new Error("Enter the admin key before validating or saving.");
+      headers.Authorization = "Bearer " + adminKey;
+    }
+    return api(path, {method:"POST", headers, body:JSON.stringify(data)});
+  }
+  $("adminKey").addEventListener("input", () => { adminKey = $("adminKey").value.trim(); updateAuthentication(); });
+  $("forgetKeyButton").addEventListener("click", forgetAdminKey);
+  window.addEventListener("pagehide", forgetAdminKey);
+  $("adminKey").value = "";
   function currentProfile(id) { return profiles.find(profile => profile.id === id); }
   function showPane(id, focus = false) {
     document.querySelectorAll("[role=tab]").forEach(tab => {
@@ -136,7 +159,7 @@
     if (!savedConfig || saving || restarting) { $("saveButton").disabled = true; return; }
     const custom = $("profile").value === "custom";
     const mapReady = !custom || ($("csvFile").files.length > 0 ? csvText !== null && csvText === validatedCsv && validationResult?.ok === true : Number(savedConfig.custom_point_count) > 0);
-    $("saveButton").disabled = !mapReady;
+    $("saveButton").disabled = !mapReady || !authenticationReady();
     const changed = dirty();
     text("saveTitle", changed ? "Unsaved changes" : "Configuration loaded");
     $("saveTitle").className = changed ? "pending" : "";
@@ -161,6 +184,8 @@
     });
     $("configFields").disabled = false;
     resetCsv(); updateSelectedProfile(); text("revisionValue", config.revision);
+    if (!authenticationRequired()) forgetAdminKey();
+    else updateAuthentication();
     if (config.config_error) message("globalMessage", "Configuration: " + config.config_error, "warn");
   }
   function resetCsv() {
@@ -184,6 +209,11 @@
   }
   async function validateCsv() {
     if (csvText === null || saving || restarting) return;
+    if (!authenticationReady()) {
+      badge("mapBadge", "Key required", "warn");
+      message("mapMessage", "Enter the admin key, then select Validate again.", "warn");
+      $("validateButton").disabled = true; updateSaveState(); return;
+    }
     const sequence = ++validationSequence, candidate = csvText;
     validatedCsv = null; validationResult = null; $("previewWrap").hidden = true;
     $("validateButton").disabled = true; badge("mapBadge", "Validating");
@@ -199,7 +229,7 @@
       if (sequence !== validationSequence) return;
       badge("mapBadge", "Needs attention", "bad"); message("mapMessage", error.message, "error");
     } finally {
-      if (sequence === validationSequence) { $("validateButton").disabled = false; updateSelectedProfile(); }
+      if (sequence === validationSequence) { $("validateButton").disabled = !authenticationReady(); updateSelectedProfile(); }
     }
   }
   $("csvFile").addEventListener("change", async () => {
@@ -259,6 +289,7 @@
   $("configForm").addEventListener("submit", async event => {
     event.preventDefault();
     if (!savedConfig || saving || restarting || !validateForm()) return;
+    if (!authenticationReady()) { message("saveMessage", "Enter the admin key before saving.", "error"); return; }
     const payload = {...configValues(), revision:savedConfig.revision};
     if (payload.profile === "custom") {
       if ($("csvFile").files.length > 0) {

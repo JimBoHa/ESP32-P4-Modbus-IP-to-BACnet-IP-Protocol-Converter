@@ -12,3 +12,4 @@ release/
 *.map
 .DS_Store
 *.log
+secrets/

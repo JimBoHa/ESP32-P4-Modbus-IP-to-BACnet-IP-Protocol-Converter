@@ -36,6 +36,24 @@ static custom_map_t active_map;
 static const char fixture[] = CUSTOM_CSV_HEADER
     "\n42,Room-Temperature,AI,3,0,u16,AB,0.1,0,62,,,,1000,Temperature\n";
 
+#if CONFIG_GW_OTA_ENABLED
+static bool admin_allowed = true, ota_restart_pending;
+esp_err_t gateway_ota_start(esp_err_t (*register_web)(httpd_handle_t)) { return register_web(routes); }
+esp_err_t dashboard_redirect_start(uint16_t port) { assert(port == 443); return ESP_OK; }
+bool gateway_ota_authorize_mutation(httpd_req_t *r)
+{
+    if (admin_allowed && !ota_restart_pending) return true;
+    httpd_resp_set_status(r, ota_restart_pending ? "409 Conflict" : "401 Unauthorized");
+    httpd_resp_send(r, "{}", HTTPD_RESP_USE_STRLEN);
+    return false;
+}
+void gateway_ota_note_restart_pending(void)
+{
+    assert(commits && !commit_error && current_request && !current_request->response_sent);
+    ota_restart_pending = true;
+}
+#endif
+
 const char *esp_err_to_name(esp_err_t error) { return error == ESP_OK ? "ESP_OK" : "test-error"; }
 void esp_restart(void) { ++restarts; }
 int64_t esp_timer_get_time(void) { time_us += 100; return time_us; }
@@ -98,6 +116,7 @@ int httpd_req_recv(httpd_req_t *r, char *out, size_t length)
     memcpy(out, r->body + r->received, length); r->received += length;
     return (int)length;
 }
+esp_err_t gateway_storage_prepare(void) { return ESP_OK; }
 esp_err_t nvs_flash_init_partition(const char *partition)
 { assert(!strcmp(partition, "gateway_cfg")); return init_error; }
 esp_err_t nvs_open_from_partition(const char *partition, const char *name, int mode, nvs_handle_t *handle)
@@ -196,6 +215,11 @@ static void test_read_and_preview(void)
     r = request("/api/config", NULL); dispatch(&r, HTTP_GET, 200);
     json = cJSON_Parse(r.response); assert(cJSON_IsObject(json));
     assert(!cJSON_HasObjectItem(json, "csv") && cJSON_GetObjectItemCaseSensitive(json, "revision")->valuedouble == 1);
+#if CONFIG_GW_OTA_ENABLED
+    assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(json, "authentication_required")));
+#else
+    assert(cJSON_IsFalse(cJSON_GetObjectItemCaseSensitive(json, "authentication_required")));
+#endif
     cJSON_Delete(json); release(&r);
     r = request("/", NULL); dispatch(&r, HTTP_GET, 200); assert(!strcmp(r.response, "test-page")); release(&r);
     r = request("/api/template.csv", NULL); dispatch(&r, HTTP_GET, 200); assert(!strcmp(r.response, "test-template")); release(&r);
@@ -289,6 +313,15 @@ int main(void)
     test_boot_load_errors();
     gateway_web_start(&active_config, &active_map, "", empty_json, empty_json);
     assert(route_count == 9);
+#if CONFIG_GW_OTA_ENABLED
+    admin_allowed = false;
+    httpd_req_t r = request("/api/config", "{}"); dispatch(&r, HTTP_POST, 401);
+    assert(!r.received && !sets && !commits && !timer_starts); release(&r);
+    r = request("/api/validate", "{}"); dispatch(&r, HTTP_POST, 401);
+    assert(!r.received && !sets && !commits && !timer_starts); release(&r);
+    r = request("/api/config", NULL); dispatch(&r, HTTP_GET, 200); release(&r);
+    admin_allowed = true;
+#endif
     test_read_and_preview(); test_rejected_saves(); test_persisted_custom_save();
     free(durable); free(staged);
     puts("production gateway HTTP/NVS shim tests passed; no network or flash I/O");

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Package a built gateway image. Run with the ESP-IDF Python environment."""
+"""Package a default HTTP/factory USB build; rejects signed-OTA configurations.
+Run with the ESP-IDF Python environment. For HTTPS OTA, use docs/OTA.md.
+"""
 import argparse
 import hashlib
 import json
@@ -19,6 +21,9 @@ def main():
     build=args.build_dir.resolve()
     dest=args.output.resolve()
     project=json.loads((build/'project_description.json').read_text())
+    configuration=json.loads((build/'config'/'sdkconfig.json').read_text())
+    if configuration.get('GW_OTA_ENABLED', False) or configuration.get('PARTITION_TABLE_CUSTOM_FILENAME') != 'partitions.csv':
+        raise SystemExit('Refusing OTA/non-factory configuration: this tool creates factory USB packages only; use docs/OTA.md for signed Ethernet updates')
     if project['project_name']!='ats_modbus_bacnet':
         raise SystemExit('Refusing to package a different firmware project')
     if dest.exists():
@@ -74,6 +79,7 @@ def main():
         'board':'Waveshare ESP32-P4-POE-ETH, 32 MB flash',
         'source_commit':source,'tracked_source_dirty':dirty,
         'flash_offset':'0x0','image':'initial-flash.bin',
+        'installation':'factory USB','management':'HTTP','ota_enabled':False,
         'hardware_tested':False,
         'note':'Private site-configured package. Verify silicon revision and back up the attached board before flashing; no force override.',
     }
@@ -101,7 +107,9 @@ python -m esptool --chip esp32p4 --port PORT write_flash 0x0 initial-flash.bin
 
 The installation replaces existing firmware. Preserve the recovery file
 privately. application.bin is an application-only image, not a merged USB
-image, and this version has no OTA upload endpoint.
+image. This factory/HTTP package has no OTA upload endpoint. Optional signed
+HTTPS/dual-slot builds use a separate procedure documented in docs/OTA.md and
+are rejected by this packaging tool.
 
 Ethernet uses DHCP. Read the assigned address from the USB log or DHCP
 lease named kohler-ats-gateway. BACnet device instance is 75181, UDP47808.
@@ -110,7 +118,7 @@ Refresh Metasys device and field-point discovery for that instance.
 Open http://GATEWAY_IP/ to choose the device profile, change the Modbus target
 and BACnet identity, or upload a CSV map. Saving restarts the gateway. Saved
 settings persist and override build defaults. The merged image includes the
-v0.2.0 partition table, required for the new gateway_cfg NVS partition.
+factory partition table, including the gateway_cfg NVS partition at 0x410000.
 Read-only diagnostics: /api/status and /api/points on HTTP port80.
 The source README and docs describe setup and qualified/unavailable measurements.
 ''')

@@ -1,6 +1,6 @@
 # ESP32-P4 Modbus IP to BACnet IP Protocol Converter
 
-Version **0.2.0** converts read-only Modbus TCP points into discoverable
+Version **0.3.0** converts read-only Modbus TCP points into discoverable
 BACnet/IP objects on the **Waveshare ESP32-P4-POE-ETH**. Its web interface lets
 you select a built-in Kohler MPAC 1500 ATS profile or upload your own CSV point
 map, set the Modbus target and BACnet identity, and save the configuration to
@@ -32,8 +32,9 @@ Kohler ATS Ethernet ── building LAN ── ESP32-P4 RJ45 ── BACnet/IP cl
                                  (flash / serial console)
 ```
 
-Connect the board to the LAN and use its USB-C programming/data connection to
-the Pi. There is **no GPIO field wiring** for this application. PoE and USB
+For a new factory installation, connect the board to the LAN and use its USB-C
+programming/data connection to the Pi. An existing compatible signed updater
+can be migrated over Ethernet as described in [OTA.md](docs/OTA.md). There is **no GPIO field wiring** for this application. PoE and USB
 connections follow the board manufacturer's instructions. The firmware uses
 the onboard IP101 PHY with MDC GPIO31, MDIO GPIO52, reset GPIO51, and PHY address
 1; these are internal board connections, not terminals to wire to the ATS.
@@ -69,16 +70,21 @@ for each gateway on the BACnet network.
   settings whose native Modbus access is read/write. No transfer, exercise,
   reset, relay, or settings-write commands are implemented.
 
-Open **http://GATEWAY_IP/** for profile selection, connection settings, CSV
+Open **http://GATEWAY_IP/** on the default build or **https://GATEWAY_IP/**
+on the signed-update build for profile selection, connection settings, CSV
 validation/upload and live point quality. `/api/status` and `/api/points`
 provide JSON. Settings and the uploaded CSV persist in a dedicated NVS flash
 partition. Rejected input leaves the active and saved configuration unchanged.
 Changing profiles or point identifiers requires refreshing field-point
 discovery in Metasys; removed objects may need removal from its cached list.
 
-Configuration HTTP has no login or TLS; anyone with access to port 80 can
-change the gateway settings. Use the intended management LAN. Field-device
-and BACnet point writes remain disabled. Firmware updates use USB; no OTA.
+The default factory build serves HTTP without a login; access to port 80 permits
+configuration changes. Its firmware installation and updates use USB. The
+optional [signed Ethernet update build](docs/OTA.md) serves HTTPS, requires an
+admin bearer token for configuration changes and CSV validation, and redirects
+HTTP to HTTPS. It supports application-only migration from the documented
+existing dual-slot updater. Anonymous diagnostic reads remain available.
+Field-device and BACnet point writes remain disabled in both builds.
 
 ## Build and configuration
 
@@ -121,11 +127,14 @@ appropriate rebuild; never bypass an incompatible-image check with `--force`.
 [Waveshare's revision guidance](https://docs.waveshare.com/ESP32-P4-ETH/FAQ)
 explains the separate build configurations.
 
-Version 0.2.0 adds a 256 KiB configuration partition at `0x410000`, after the
+The default factory layout, introduced in 0.2.0 and retained in 0.3.0, has a
+256 KiB configuration partition at `0x410000`, after the
 unchanged factory application partition. When upgrading from 0.1.0, flash the
 **partition table and application** using `idf.py flash`; an app-only update
 cannot create this partition. No erase of the whole flash is required. The
-older private 0.1.0 package does not include the web/CSV features.
+older private 0.1.0 package does not include the web/CSV features. The signed
+OTA layout and legacy-device migration use different offsets; follow
+[OTA.md](docs/OTA.md) instead of these USB/factory instructions for that build.
 
 ## Local verification
 

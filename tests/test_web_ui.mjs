@@ -19,6 +19,7 @@ const html = await readFile(resolve(root, 'main/web/index.html'));
 const header = 'instance,name,object_type,function,address,data_type,byte_order,scale,offset,units,bit,states,length,poll_ms,description';
 const goodCsv = header + '\n1001,Load voltage,AI,3,0,u16,AB,0.1,0,5,,,,1000,Line voltage\n';
 const attack = '<img src=x onerror="window.__xss=1">';
+const testAdminKey = 'ui-test-only-<masked-key>-12345';
 const profiles = [
   {id:'mpac1500_full',name:'Kohler MPAC1500 ATS — full',description:'Older Section 13 ATS map; controller verification enabled.',point_count:164},
   {id:'mpac1500_electrical',name:'Kohler MPAC1500 ATS — electrical',description:'24 electrical/status points; same polling and verification.',point_count:24},
@@ -37,7 +38,7 @@ const rawPoints = [
 let config = structuredClone(initialConfig), map = goodCsv, offline = false, rejectSave = false;
 const requests = [], posts = [];
 const server = createServer(async (req,res) => {
-  requests.push({method:req.method,url:req.url});
+  requests.push({method:req.method,url:req.url,authorization:req.headers.authorization});
   res.setHeader('Cache-Control','no-store');
   const send = (status,data) => {res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
   if (req.url === '/' || req.url === '/index.html') {res.writeHead(200,{'Content-Type':'text/html'});res.end(html);return;}
@@ -47,6 +48,7 @@ const server = createServer(async (req,res) => {
     let data; try {data=JSON.parse(raw);} catch {send(400,{error:'Malformed JSON'});return;}
     posts.push({url:req.url,data,headers:req.headers});
     if (req.headers['x-gateway-request'] !== '1' || req.headers['content-type'] !== 'application/json') {send(403,{error:'Mutation headers required'});return;}
+    if (config.authentication_required && req.headers.authorization !== 'Bearer ' + testAdminKey) {send(401,{error:'Administrator key required or invalid'});return;}
     if (req.url === '/api/validate') {
       if (data.csv !== goodCsv) {send(400,{ok:false,error:'CSV row 2: invalid object_type ' + attack});return;}
       send(200,{ok:true,point_count:1,points:[{name:attack,object_type:0,instance:1001}]});return;
@@ -243,6 +245,77 @@ try {
     assert.equal(await page.locator('#configFields').isDisabled(),false);
     await page.locator('#profile').selectOption('mpac1500_full');
     assert.equal(await enabled('saveButton'),true);
+  });
+  await check('anonymous mutations never include an Authorization header',async()=>{
+    assert.equal(posts.every(p=>p.headers.authorization===undefined),true);
+    assert.equal(await page.locator('#adminPanel').isHidden(),true);
+    await page.locator('#resetButton').click();
+  });
+  await check('authenticated mode keeps anonymous reads and waits for key before CSV validation',async()=>{
+    config.authentication_required=true;config.config_error='';
+    await page.reload();
+    await waitFor(async()=>(await text('connectionLabel'))==='Connected','Authenticated mode failed to load');
+    await page.locator('#configTab').click();
+    assert.equal(await page.locator('#adminPanel').isVisible(),true);
+    assert.equal(await page.locator('#adminKey').getAttribute('type'),'password');
+    assert.equal(await enabled('saveButton'),false);
+    const before=posts.length;
+    await file('valid.csv',goodCsv);
+    await waitFor(async()=>(await text('mapBadge'))==='Key required','CSV did not request key');
+    assert.equal(posts.length,before);
+    await page.locator('#adminKey').fill(testAdminKey);
+    await page.locator('#validateButton').click();
+    await waitFor(async()=>(await text('mapBadge'))==='Validated','Authenticated CSV validation failed');
+    assert.equal(posts.at(-1).headers.authorization,'Bearer '+testAdminKey);
+    assert.equal(posts.at(-1).headers['x-gateway-request'],'1');
+    assert.deepEqual(posts.at(-1).data,{csv:goodCsv});
+    assert.equal(requests.filter(r=>r.method==='GET').every(r=>r.authorization===undefined),true);
+  });
+  await check('key is masked, kept out of storage/URL/markup/payload, and used for authenticated save',async()=>{
+    const privacy=await page.evaluate(key=>({
+      text:document.body.textContent.includes(key), markup:document.documentElement.outerHTML.includes(key),
+      local:JSON.stringify(localStorage), session:JSON.stringify(sessionStorage), cookie:document.cookie,
+      url:location.href, value:document.getElementById('adminKey').value
+    }),testAdminKey);
+    assert.equal(privacy.text,false);assert.equal(privacy.markup,false);
+    assert.equal(privacy.local,'{}');assert.equal(privacy.session,'{}');assert.equal(privacy.cookie,'');
+    assert.equal(privacy.url.includes(testAdminKey),false);assert.equal(privacy.value,testAdminKey);
+    const previous=config.revision;
+    await page.locator('#device_name').fill('Authenticated-ATS');
+    await page.locator('#saveButton').click();
+    await waitFor(()=>config.revision===previous+1,'Authenticated save did not reach server');
+    const saved=savedPosts().at(-1);
+    assert.equal(saved.headers.authorization,'Bearer '+testAdminKey);
+    assert.equal(saved.data.revision,previous);
+    assert.equal(JSON.stringify(saved.data).includes(testAdminKey),false);
+    assert.equal(Object.hasOwn(saved.data,'authentication_required'),false);
+    await waitFor(async()=>(await text('revisionValue'))===String(previous+1),'Authenticated restart did not reconnect');
+    assert.equal(await page.locator('#adminKey').inputValue(),testAdminKey);
+    await page.screenshot({path:resolve(output,'mobile-admin.png'),fullPage:true});
+  });
+  await check('forget key blocks mutations; invalid key error never echoes key',async()=>{
+    await page.locator('#forgetKeyButton').click();
+    assert.equal(await page.locator('#adminKey').inputValue(),'');
+    assert.equal(await enabled('saveButton'),false);
+    const previous=config.revision;
+    await page.locator('#adminKey').fill('wrong-key-test');
+    await page.locator('#saveButton').click();
+    await waitFor(async()=>(await text('saveMessage')).includes('Administrator key required or invalid'),'Unauthorized error missing');
+    assert.equal(config.revision,previous);
+    assert.equal((await text('saveMessage')).includes('wrong-key-test'),false);
+  });
+  await check('reload clears admin key; pagehide clears in-memory key for back/forward cache',async()=>{
+    await page.locator('#adminKey').fill(testAdminKey);
+    await page.reload();
+    await waitFor(async()=>(await text('connectionLabel'))==='Connected','Reload after auth failed');
+    await page.locator('#configTab').click();
+    assert.equal(await page.locator('#adminKey').inputValue(),'');
+    assert.equal(await enabled('saveButton'),false);
+    await page.locator('#adminKey').fill(testAdminKey);
+    await page.evaluate(()=>window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:true})));
+    assert.equal(await page.locator('#adminKey').inputValue(),'');
+    assert.equal(await enabled('saveButton'),false);
+    assert.equal(requests.filter(r=>r.method==='GET').every(r=>r.authorization===undefined),true);
   });
   assert.deepEqual(errors,[],'Browser JavaScript errors');
   assert.deepEqual(foreignRequests,[],'Page made external requests');

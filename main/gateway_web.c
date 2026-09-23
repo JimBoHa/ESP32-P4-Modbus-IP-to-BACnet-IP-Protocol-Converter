@@ -1,4 +1,12 @@
 #include "gateway_web.h"
+#include "gateway_storage.h"
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+#if CONFIG_GW_OTA_ENABLED
+#include "gateway_ota.h"
+#include "dashboard_redirect.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,7 +32,8 @@ extern const unsigned char template_end[] asm("_binary_template_csv_end");
 void gateway_web_load(gateway_config_t *c, custom_map_t *map, char *error, size_t size)
 {
     error[0] = 0;
-    esp_err_t err = nvs_flash_init_partition("gateway_cfg");
+    esp_err_t err = gateway_storage_prepare();
+    if (err == ESP_OK) err = nvs_flash_init_partition("gateway_cfg");
     if (err != ESP_OK) { snprintf(error, size, "Configuration storage: %s", esp_err_to_name(err)); return; }
     nvs_handle_t nvs;
     err = nvs_open_from_partition("gateway_cfg", "gateway", NVS_READWRITE, &nvs);
@@ -85,6 +94,11 @@ static esp_err_t config_handler(httpd_req_t *r)
     cJSON *j = gateway_config_json(active, false);
     cJSON_AddNumberToObject(j, "custom_point_count", saved_map->count);
     cJSON_AddStringToObject(j, "config_error", boot_error);
+#if CONFIG_GW_OTA_ENABLED
+    cJSON_AddBoolToObject(j, "authentication_required", true);
+#else
+    cJSON_AddBoolToObject(j, "authentication_required", false);
+#endif
     return json_reply(r, j);
 }
 
@@ -125,6 +139,9 @@ static esp_err_t csv_handler(httpd_req_t *r)
 
 static char *request_body(httpd_req_t *r)
 {
+#if CONFIG_GW_OTA_ENABLED
+    if (!gateway_ota_authorize_mutation(r)) return NULL;
+#endif
     char header[64];
     /* Requiring a non-simple custom header and JSON prevents browser forms
      * and cross-origin fetch from changing config. No CORS grants are sent. */
@@ -228,6 +245,9 @@ static esp_err_t save_handler(httpd_req_t *r)
     free(stored);
     if (err != ESP_OK) return json_error(r, "500 Internal Server Error", "Configuration storage failed; restart to verify saved state before retrying");
     restart_pending = true;
+#if CONFIG_GW_OTA_ENABLED
+    gateway_ota_note_restart_pending();
+#endif
     cJSON *reply = cJSON_CreateObject();
     cJSON_AddBoolToObject(reply, "ok", true);
     cJSON_AddBoolToObject(reply, "restart", true);
@@ -239,17 +259,8 @@ static esp_err_t save_handler(httpd_req_t *r)
     return response;
 }
 
-void gateway_web_start(const gateway_config_t *c, const custom_map_t *map,
-                       const char *error, cJSON *(*status)(void), cJSON *(*points)(void))
+static esp_err_t register_web(httpd_handle_t http)
 {
-    active = c; saved_map = map; boot_error = error; status_json = status; points_json = points;
-    esp_timer_create_args_t timer = {.callback = restart_callback, .name = "config_restart"};
-    ESP_ERROR_CHECK(esp_timer_create(&timer, &restart_timer));
-    httpd_config_t hc = HTTPD_DEFAULT_CONFIG();
-    hc.stack_size = 12288; hc.max_open_sockets = 3; hc.max_uri_handlers = 10;
-    hc.lru_purge_enable = true; hc.recv_wait_timeout = 3; hc.send_wait_timeout = 3;
-    httpd_handle_t http;
-    ESP_ERROR_CHECK(httpd_start(&http, &hc));
     const httpd_uri_t handlers[] = {
         {.uri="/", .method=HTTP_GET, .handler=page_handler},
         {.uri="/api/config", .method=HTTP_GET, .handler=config_handler},
@@ -261,7 +272,30 @@ void gateway_web_start(const gateway_config_t *c, const custom_map_t *map,
         {.uri="/api/validate", .method=HTTP_POST, .handler=validate_handler},
         {.uri="/api/config", .method=HTTP_POST, .handler=save_handler},
     };
-    for (size_t i = 0; i < sizeof(handlers)/sizeof(handlers[0]); ++i)
-        ESP_ERROR_CHECK(httpd_register_uri_handler(http, &handlers[i]));
+    for (size_t i = 0; i < sizeof(handlers)/sizeof(handlers[0]); ++i) {
+        esp_err_t error = httpd_register_uri_handler(http, &handlers[i]);
+        if (error != ESP_OK) return error;
+    }
+    return ESP_OK;
+}
+
+void gateway_web_start(const gateway_config_t *c, const custom_map_t *map,
+                       const char *error, cJSON *(*status)(void), cJSON *(*points)(void))
+{
+    active = c; saved_map = map; boot_error = error; status_json = status; points_json = points;
+    esp_timer_create_args_t timer = {.callback = restart_callback, .name = "config_restart"};
+    ESP_ERROR_CHECK(esp_timer_create(&timer, &restart_timer));
+#if CONFIG_GW_OTA_ENABLED
+    ESP_ERROR_CHECK(gateway_ota_start(register_web));
+    ESP_ERROR_CHECK(dashboard_redirect_start(CONFIG_GW_OTA_PORT));
+    ESP_LOGI(TAG, "Profile selection, CSV upload and signed updates available over HTTPS");
+#else
+    httpd_config_t hc = HTTPD_DEFAULT_CONFIG();
+    hc.stack_size = 12288; hc.max_open_sockets = 3; hc.max_uri_handlers = 10;
+    hc.lru_purge_enable = true; hc.recv_wait_timeout = 3; hc.send_wait_timeout = 3;
+    httpd_handle_t http;
+    ESP_ERROR_CHECK(httpd_start(&http, &hc));
+    ESP_ERROR_CHECK(register_web(http));
     ESP_LOGI(TAG, "Profile selection and CSV upload available over HTTP");
+#endif
 }

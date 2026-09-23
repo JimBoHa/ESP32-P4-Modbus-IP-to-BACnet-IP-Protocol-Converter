@@ -1,11 +1,15 @@
 # Commission the ESP32-P4 ATS gateway
 
-This procedure applies to gateway **v0.2.0**, a Waveshare
+This procedure applies to the default HTTP/factory build of gateway **v0.3.0**, a Waveshare
 **ESP32-P4-POE-ETH** with 32 MB flash, and the older MPAC 1500 register map.
 The software has been exercised on the host; this new board's USB identity,
 flash contents, Ethernet link, ATS communication, and Metasys behavior still
 need to be checked on hardware. Preserve the observations from those checks
 alongside the delivered build manifest.
+
+For an existing compatible signed updater, use [OTA.md](OTA.md) for Ethernet
+migration. That procedure preserves the existing bootloader and partition
+table; do not apply the factory USB image to that migration.
 
 ## Prepare the board and Pi
 
@@ -172,7 +176,7 @@ chip revision match this installation. Follow that package's instructions for
 the merged image; do not substitute an app-only binary at the merged-image
 offset.
 
-For v0.2.0, build current source and flash its partition table and application
+For the default v0.3.0 factory build, build current source and flash its partition table and application
 together. The new `gateway_cfg` NVS partition is at `0x410000`, size `0x40000`.
 An application-only 0.1.0 upgrade cannot create it. After the identity, backup,
 and configuration checks:
@@ -182,9 +186,10 @@ idf.py -p "$ATS_USB" flash monitor
 ```
 
 ESP-IDF uses the build's own partition/offset arguments. Exit the monitor with
-**Ctrl+]**. The partition layout currently contains a factory application and
-does not provide OTA slots. Subsequent v0.2.0 updates are USB updates; retain
-the working binary and configuration before replacing them.
+**Ctrl+]**. This default partition layout contains a factory application and
+does not provide OTA slots. Updates to this factory layout use USB; retain
+the working binary and configuration before replacing them. The optional
+signed HTTPS/dual-slot build follows [OTA.md](OTA.md) instead.
 
 ## Verify Ethernet and the old-map profile
 
@@ -202,7 +207,7 @@ curl --fail "http://$ATS_GATEWAY/api/status"
 curl --fail "http://$ATS_GATEWAY/api/points"
 ```
 
-`/api/status` should report firmware `0.2.0`, `ethernet_up: true`, and eventually
+`/api/status` should report firmware `0.3.0`, `ethernet_up: true`, and eventually
 `profile_verified: true`. Check `profile_status` when verification fails. Before
 catalog reads, the gateway checks controller type, the expected firmware, the
 new-map MAC range, and then the old-map fingerprint. A newer map or mismatched
@@ -254,8 +259,9 @@ renew or resubscribe. Confirm the site's expected behavior after power recovery.
 
 Read-only enforcement is covered by local tests. This gateway is intended to
 observe the ATS: commissioning does not require a transfer, exercise, alarm
-reset, or controller settings change. HTTP includes configuration/upload controls without login or
-TLS; make it reachable only from the intended management/building LAN.
+reset, or controller settings change. The default HTTP build includes
+configuration/upload controls without login or TLS. The signed-update build
+uses HTTPS and an admin bearer key for those changes; see [OTA.md](OTA.md).
 
 If Ethernet is up but BACnet discovery fails, check the selected port, duplicate
 device instances, VLAN/routing boundaries, firewall rules, and supervisor
@@ -264,7 +270,10 @@ reasons and the ATS's options/sensing setup before changing decoder assumptions.
 
 ## Web profiles and custom maps
 
-Open `http://GATEWAY_IP/` and follow [WEB_CONFIGURATION.md](WEB_CONFIGURATION.md).
+Open `http://GATEWAY_IP/` for the default factory build, or
+`https://GATEWAY_IP/` for the signed-update build, and follow
+[WEB_CONFIGURATION.md](WEB_CONFIGURATION.md). In the latter build, enter the
+admin key before CSV validation or configuration saving.
 Validate a CSV before saving; Save and restart applies the entire configuration.
 After reconnecting, confirm the selected profile, target, device instance and
 point count survived reboot. Refresh Metasys field-point discovery after changing

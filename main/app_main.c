@@ -11,6 +11,7 @@
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_task_wdt.h"
+#include "esp_system.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
 #include "lwip/inet.h"
@@ -20,11 +21,18 @@
 #include "gateway_bacnet.h"
 #include "gateway_poll.h"
 #include "gateway_web.h"
+#if CONFIG_GW_OTA_ENABLED
+#include "gateway_ota.h"
+#endif
 
 static const char *TAG = "ats_gateway";
 static SemaphoreHandle_t lock;
 static esp_netif_t *ethernet;
 static bool network_up;
+#if CONFIG_GW_OTA_ENABLED
+static bool web_started;
+static uint64_t poll_heartbeat_ms, bacnet_heartbeat_ms;
+#endif
 static uint32_t network_generation;
 static uint32_t published_generation;
 static esp_netif_ip_info_t network_info;
@@ -41,6 +49,20 @@ static size_t active_count;
 static bool is_custom(void) { return settings.profile == GW_PROFILE_CUSTOM; }
 
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
+
+#if CONFIG_GW_OTA_ENABLED
+static bool startup_healthy(void)
+{
+    const uint64_t now = now_ms();
+    xSemaphoreTake(lock, portMAX_DELAY);
+    bool healthy = network_up && web_started && gateway_ota_ready() &&
+        !config_error[0] && published_bacnet.initialized && published_bacnet.link_up &&
+        poll_heartbeat_ms && bacnet_heartbeat_ms &&
+        now - poll_heartbeat_ms <= 2500 && now - bacnet_heartbeat_ms <= 2500;
+    xSemaphoreGive(lock);
+    return healthy;
+}
+#endif
 
 static void network_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -104,6 +126,9 @@ static void poll_task(void *arg)
         published = poller;
         published_custom = custom;
         published_generation = changed;
+#if CONFIG_GW_OTA_ENABLED
+        poll_heartbeat_ms = now_ms();
+#endif
         xSemaphoreGive(lock);
         previous_up = up;
         generation = changed;
@@ -188,6 +213,9 @@ static void bacnet_task(void *arg)
             gateway_bacnet_stats(&stats);
             xSemaphoreTake(lock, portMAX_DELAY);
             published_bacnet = stats;
+#if CONFIG_GW_OTA_ENABLED
+            bacnet_heartbeat_ms = now_ms();
+#endif
             xSemaphoreGive(lock);
         }
         ESP_ERROR_CHECK(esp_task_wdt_reset());
@@ -217,8 +245,14 @@ static cJSON *status_json(void)
     cJSON *j = cJSON_CreateObject();
     if (!j) return NULL;
     cJSON_AddStringToObject(j, "firmware", esp_app_get_description()->version);
+    cJSON_AddStringToObject(j, "application", "ESP32-P4 Modbus IP to BACnet IP Protocol Converter");
+    cJSON_AddStringToObject(j, "project", esp_app_get_description()->project_name);
+    cJSON_AddStringToObject(j, "git_revision", PROJECT_GIT_REVISION);
     cJSON_AddStringToObject(j, "board", "Waveshare ESP32-P4-POE-ETH");
     cJSON_AddNumberToObject(j, "uptime_seconds", now_ms() / 1000.0);
+    cJSON_AddNumberToObject(j, "free_heap_bytes", esp_get_free_heap_size());
+    cJSON_AddNumberToObject(j, "free_internal_heap_bytes", esp_get_free_internal_heap_size());
+    cJSON_AddNumberToObject(j, "minimum_free_heap_bytes", esp_get_minimum_free_heap_size());
     cJSON_AddBoolToObject(j, "ethernet_up", up);
     cJSON_AddBoolToObject(j, "profile_verified", profile);
     cJSON_AddStringToObject(j, "profile_status", reason ? reason : "Initializing");
@@ -277,6 +311,9 @@ void app_main(void)
 {
     lock = xSemaphoreCreateMutex();
     configASSERT(lock);
+#if CONFIG_GW_OTA_ENABLED
+    ESP_ERROR_CHECK(gateway_ota_begin_validation(startup_healthy));
+#endif
     gateway_poll_init(&published);
     gateway_config_defaults(&settings);
     snprintf(settings.modbus_host, sizeof(settings.modbus_host), "%s", CONFIG_GW_MODBUS_HOST);
@@ -330,6 +367,11 @@ void app_main(void)
     configASSERT(xTaskCreate(poll_task, "ats_modbus", 8192, NULL, 4, NULL) == pdPASS);
     configASSERT(xTaskCreate(bacnet_task, "ats_bacnet", 12288, NULL, 5, NULL) == pdPASS);
     gateway_web_start(&settings, &custom_map, config_error, status_json, points_json);
+#if CONFIG_GW_OTA_ENABLED
+    xSemaphoreTake(lock, portMAX_DELAY);
+    web_started = true;
+    xSemaphoreGive(lock);
+#endif
     ESP_ERROR_CHECK(esp_eth_start(driver));
     ESP_LOGI(TAG, "Read-only Modbus gateway started; configure profiles and CSV maps in the web interface");
 }

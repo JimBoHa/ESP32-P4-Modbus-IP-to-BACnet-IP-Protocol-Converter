@@ -54,4 +54,15 @@ menu "ATS Modbus to BACnet gateway"
     config GW_ROUTER
         string "Static IPv4 default gateway"
         default "0.0.0.0"
+    config GW_OTA_ENABLED
+        bool "Signed HTTPS OTA and authenticated HTTPS configuration"
+        default n
+        help
+            Requires dual OTA slots, automatic rollback, host signing key and
+            externally supplied TLS/admin credentials. Never provisions eFuses.
+    config GW_OTA_PORT
+        int "HTTPS management port"
+        depends on GW_OTA_ENABLED
+        range 81 65535
+        default 443
 endmenu
