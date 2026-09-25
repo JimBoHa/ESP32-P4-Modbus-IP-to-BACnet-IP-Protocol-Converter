@@ -73,7 +73,7 @@ esp_err_t esp_timer_start_once(esp_timer_handle_t timer, uint64_t timeout)
 }
 esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config)
 {
-    assert(config->max_uri_handlers >= 9); *handle = routes; return ESP_OK;
+    assert(config->max_uri_handlers >= 10); *handle = routes; return ESP_OK;
 }
 esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *handler)
 {
@@ -152,6 +152,12 @@ void nvs_close(nvs_handle_t handle)
 { assert(handle == 1); free(staged); staged = NULL; staged_size = 0; }
 
 static cJSON *empty_json(void) { return cJSON_CreateObject(); }
+static bool history_unavailable;
+static cJSON *error_history_json(void)
+{
+    if (history_unavailable) return NULL;
+    return cJSON_Parse("{\"capacity\":32,\"count\":1,\"events\":[{\"sequence\":7,\"utc_ms\":null,\"uptime_ms\":1200,\"offset\":42,\"error\":\"timeout\"}]}");
+}
 static char *config_text(const gateway_config_t *c, bool csv)
 {
     cJSON *j = gateway_config_json(c, csv); assert(j);
@@ -311,10 +317,25 @@ int main(void)
 {
     gateway_config_defaults(&active_config);
     test_boot_load_errors();
-    gateway_web_start(&active_config, &active_map, "", empty_json, empty_json);
-    assert(route_count == 9);
+    gateway_web_start(&active_config, &active_map, "", empty_json, empty_json, error_history_json);
+    assert(route_count == 10);
 #if CONFIG_GW_OTA_ENABLED
     admin_allowed = false;
+#endif
+    httpd_req_t history = request("/api/errors", NULL); dispatch(&history, HTTP_GET, 200);
+    assert(!strcmp(history.response_type, "application/json"));
+    cJSON *history_json = cJSON_Parse(history.response); assert(history_json);
+    cJSON *event = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(history_json, "events"), 0);
+    assert(cJSON_GetObjectItemCaseSensitive(event, "offset")->valuedouble == 42);
+    assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(event, "utc_ms")));
+    assert(!sets && !commits && !timer_starts);
+    cJSON_Delete(history_json); release(&history);
+    history_unavailable = true;
+    history = request("/api/errors", NULL); dispatch(&history, HTTP_GET, 500); release(&history);
+    history_unavailable = false;
+    for (size_t i = 0; i < route_count; ++i)
+        assert(strcmp(routes[i].uri, "/api/errors") || routes[i].method == HTTP_GET);
+#if CONFIG_GW_OTA_ENABLED
     httpd_req_t r = request("/api/config", "{}"); dispatch(&r, HTTP_POST, 401);
     assert(!r.received && !sets && !commits && !timer_starts); release(&r);
     r = request("/api/validate", "{}"); dispatch(&r, HTTP_POST, 401);

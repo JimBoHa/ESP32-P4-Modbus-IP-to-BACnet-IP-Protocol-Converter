@@ -42,7 +42,9 @@ typedef struct {
     uint64_t next_request_ms;
     uint64_t last_success_ms;
     uint32_t requests, successes, failures, consecutive_failures;
-    uint16_t transaction_id, last_offset;
+    /* Metadata for the last actual request, retained across no-op steps. */
+    uint16_t transaction_id, last_offset, last_quantity;
+    uint8_t last_function;
     mb_result_t last_result;
 } custom_poll_t;
 

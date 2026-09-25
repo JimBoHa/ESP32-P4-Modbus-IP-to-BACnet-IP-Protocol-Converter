@@ -1,5 +1,61 @@
 # Validation record
 
+## Version 0.4.0: persistent Modbus error history, 2026-09-24
+
+- Twelve native test executables and twelve TCP loopback tests pass with
+  ASan/UBSan. Eight focused history scenarios cover ring replacement and reboot
+  reload, unknown UTC, concurrent events during a save, the 30-second write
+  limit, write failures/recovery, corrupt/incompatible storage preservation,
+  unavailable storage/worker, and failure of each JSON allocation.
+- Poller regressions verify exact request metadata for ATS and custom FC01–04
+  errors. The expected old-map identity exception remains excluded from both
+  the failure counter and retained history.
+- Twenty-one Chromium scenarios pass, including empty and retained history,
+  unknown UTC, storage errors, a stale diagnostics endpoint without blocking
+  point updates, safe rendering of strings, and JSON downloads. Native HTTP
+  and HTTPS harnesses exercise the new anonymous read-only route.
+- Source review checked the history mutex, snapshot generation during flash
+  writes, SNTP initialization, and configuration restoration across a lost
+  HTTP response in the opt-in physical test.
+
+### Physical deployment and retained-error test
+
+Both the default factory and signed HTTPS ESP32-P4 builds pass. The signed
+0.4.0 image from source `ad43a54ee1b7` was installed over Ethernet and verified
+in **ota_1, VALID**, preserving 0.3.0 in ota_0. The signed file is **987,136
+bytes**, with SHA-256
+`47199475e0bab330115ccdb650ffef5b9daeec91e3d2526d9aef5cec23605113`;
+the ESP application-image digest is
+`aae37a9a80cb0c2cc424ccef419736e80fdc71e5fdde93b97604141f091bc130`.
+
+- The actual gateway made 41 FC03 reads through a temporary local proxy. One
+  response had its transaction ID deliberately changed after the real ATS
+  replied. The gateway retained exactly one `MB_ERR_TRANSACTION` event with
+  the correct function, unit, offset **249**, quantity **4**, transaction
+  **11**, target, configuration revision, completion uptime and synchronized
+  UTC timestamp. No source-device writes or settings changes occurred.
+- Subsequent successful reads did not clear the record. The background save
+  completed, the original gateway source settings were restored, and the
+  restoration reboot retained the exact event under its original boot ID.
+  The current boot ID advanced. This verifies a commanded restart after a
+  completed save; it does not test interrupted flash writes or power loss.
+- Final configuration revision **6** restores the full ATS profile, original
+  target/unit/BACnet identity and empty custom map. At the final snapshot,
+  **81 reads succeeded with zero new failures**. There were 144 good points
+  and the same 20 unverified/inapplicable points as before the update.
+- An independent BACpypes3 client discovered the same **172 unique objects**
+  and read operational device status, revision and live point properties.
+  Phase-to-phase voltages were **492 / 490 / 490.5 V** and frequency **59.9 Hz**
+  with no-fault-detected reliability. These are protocol readings, not a
+  contemporaneous manual display comparison.
+- Chromium loaded the physical HTTPS Errors tab, displayed the retained UTC
+  event, and downloaded its JSON snapshot. Desktop/mobile screenshots were
+  inspected and no JavaScript errors occurred. Raw evidence remains private.
+
+The single retained history entry is the deliberate proxy test, not an
+unexplained ATS failure. Earlier aggregate failures cannot be reconstructed
+because the prior firmware did not retain their request details.
+
 ## Version 0.3.0: optional signed HTTPS updates, 2026-09-22
 
 - ESP-IDF 5.5.4 signed OTA and default factory ESP32-P4 target builds pass.
@@ -196,3 +252,28 @@ The bounded native live-path test is opt-in and contacts the specified ATS:
 The output directory must be new. Ports 47819–47821 must be free on loopback.
 Fault injection affects only that test's proxy; it does not interrupt other
 clients. Do not run it concurrently with another copy of this test.
+
+The physical error-history test requires a signed-HTTPS gateway already using
+an ATS preset, a synchronized clock, and a reachable test computer. It saves
+the original settings, temporarily points the gateway at a local read-only
+proxy, and restarts it. One response receives an incorrect transaction ID;
+the source receives only ordinary reads. It checks the recorded error,
+successful-read retention and flash save, restores the original target, then
+checks retention after the restoration reboot. Gateway readings can briefly
+fault during this test. BACnet object identifiers are not changed.
+
+```sh
+python3 tools/test_device_error_history.py \
+  --host GATEWAY_IP --cert main/ota_server_cert.pem \
+  --token-file /private/path/ota_token.txt \
+  --proxy-bind TEST_COMPUTER_IP --proxy-port 15020 \
+  --output private/new-error-history-test
+```
+
+Use a new output directory. TCP 15020 must be reachable from the gateway.
+The proxy accepts only that gateway's IPv4 address and forwards FC03 reads
+to its existing source. Cleanup retries configuration saves across a pending
+restart, including a lost save response. If the test computer itself stops,
+use `original-config.json` in the output directory to restore the source
+through the gateway web interface. Reports contain site addresses and raw
+responses; keep them private. This test does not establish power-loss behavior.
