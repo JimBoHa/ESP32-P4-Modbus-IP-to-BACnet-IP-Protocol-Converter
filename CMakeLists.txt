@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-set(PROJECT_VER "0.3.0")
+set(PROJECT_VER "0.4.0")
 # The compatibility family preserves the deployed signed-OTA application gate.
 # It does not change the converter's user-facing application identity.
 set(GW_PROJECT_FAMILY "ats_modbus_bacnet" CACHE STRING "Signed OTA application family")

@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <sys/time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -10,6 +12,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif.h"
+#include "esp_netif_sntp.h"
 #include "esp_task_wdt.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -21,6 +24,7 @@
 #include "gateway_bacnet.h"
 #include "gateway_poll.h"
 #include "gateway_web.h"
+#include "error_history.h"
 #if CONFIG_GW_OTA_ENABLED
 #include "gateway_ota.h"
 #endif
@@ -44,11 +48,48 @@ static custom_poll_t published_custom;
 static char config_error[192];
 static const ats_point_def_t *active_points;
 static size_t active_count;
+static atomic_bool clock_synchronized;
+static bool sntp_initialized;
 
 /* Configuration and catalog remain immutable until the requested reboot. */
 static bool is_custom(void) { return settings.profile == GW_PROFILE_CUSTOM; }
 
 static uint64_t now_ms(void) { return (uint64_t)esp_timer_get_time() / 1000; }
+
+static void time_synchronized(struct timeval *tv)
+{
+    atomic_store(&clock_synchronized, tv && tv->tv_sec >= 1704067200);
+}
+
+static int64_t utc_ms(void)
+{
+    struct timeval tv;
+    if (!atomic_load(&clock_synchronized) || gettimeofday(&tv, NULL) != 0 ||
+        tv.tv_sec < 1704067200) return 0;
+    return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
+static cJSON *errors_json(void)
+{
+    return error_history_json(atomic_load(&clock_synchronized));
+}
+
+static void record_failure(uint8_t function, uint16_t offset, uint16_t quantity,
+                           uint16_t transaction_id, const char *phase,
+                           const mb_result_t *result)
+{
+    error_history_request_t request = {
+        .port = settings.modbus_port, .unit = settings.modbus_unit,
+        .function = function, .offset = offset, .quantity = quantity,
+        .transaction_id = transaction_id, .config_revision = settings.revision,
+    };
+    snprintf(request.host, sizeof(request.host), "%s", settings.modbus_host);
+    snprintf(request.profile, sizeof(request.profile), "%s", gateway_profile_id(settings.profile));
+    snprintf(request.phase, sizeof(request.phase), "%s", phase);
+    /* Capture completion time and details before the next request replaces them.
+     * Failure counters already exclude the expected old-map identity exception. */
+    error_history_record(&request, result, now_ms(), utc_ms());
+}
 
 #if CONFIG_GW_OTA_ENABLED
 static bool startup_healthy(void)
@@ -81,6 +122,10 @@ static void network_event(void *arg, esp_event_base_t base, int32_t id, void *da
         ESP_LOGW(TAG, "Ethernet unavailable");
     }
     xSemaphoreGive(lock);
+    if (base == IP_EVENT && id == IP_EVENT_ETH_GOT_IP && sntp_initialized) {
+        esp_err_t err = esp_netif_sntp_start();
+        if (err != ESP_OK) ESP_LOGW(TAG, "SNTP start: %s", esp_err_to_name(err));
+    }
 }
 
 static void poll_task(void *arg)
@@ -109,10 +154,18 @@ static void poll_task(void *arg)
             poller.next_request_ms = custom.next_request_ms = now_ms();
         }
         if (up && !config_error[0] && is_custom()) {
+            uint32_t before = custom.failures;
             custom_poll_step(&custom, &custom_map, settings.modbus_host,
                              settings.modbus_port, settings.modbus_unit, now_ms());
-        } else if (up && !config_error[0] && gateway_poll_step(&poller, &config, now_ms())) {
-            if (poller.consecutive_failures == 1) {
+            if (custom.failures != before)
+                record_failure(custom.last_function, custom.last_offset, custom.last_quantity,
+                               custom.transaction_id, "data", &custom.last_result);
+        } else if (up && !config_error[0]) {
+            uint32_t before = poller.failures;
+            gateway_poll_step(&poller, &config, now_ms());
+            if (poller.failures != before) {
+                record_failure(3, poller.last_offset, poller.last_quantity, poller.transaction_id,
+                               poller.last_checking ? "identity" : "data", &poller.last_result);
                 ESP_LOGW(TAG, "ATS offset %u: %s", poller.last_offset,
                          mb_error_string(poller.last_result.error));
             }
@@ -271,6 +324,10 @@ static cJSON *status_json(void)
     cJSON_AddNumberToObject(j, "good_points", stats.good_points);
     cJSON_AddNumberToObject(j, "fault_points", stats.fault_points);
     cJSON_AddBoolToObject(j, "read_only", true);
+    cJSON_AddBoolToObject(j, "clock_synchronized", atomic_load(&clock_synchronized));
+    int64_t timestamp = utc_ms();
+    if (timestamp) cJSON_AddNumberToObject(j, "utc_ms", (double)timestamp);
+    else cJSON_AddNullToObject(j, "utc_ms");
     return j;
 }
 
@@ -326,6 +383,7 @@ void app_main(void)
     settings.expected_mac_fragment = CONFIG_GW_EXPECTED_MAC_FRAGMENT;
     ESP_ERROR_CHECK(nvs_flash_init());
     gateway_web_load(&settings, &custom_map, config_error, sizeof(config_error));
+    error_history_init();
     if (config_error[0]) ESP_LOGE(TAG, "%s; polling disabled until repaired", config_error);
     active_points = is_custom() ? custom_map.defs : ats_points;
     active_count = is_custom() ? custom_map.count :
@@ -333,6 +391,15 @@ void app_main(void)
     custom_poll_init(&published_custom, &custom_map);
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+    if (CONFIG_GW_NTP_SERVER[0]) {
+        esp_sntp_config_t time_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(CONFIG_GW_NTP_SERVER);
+        time_config.start = false;
+        time_config.wait_for_sync = false;
+        time_config.sync_cb = time_synchronized;
+        esp_err_t err = esp_netif_sntp_init(&time_config);
+        sntp_initialized = err == ESP_OK;
+        if (err != ESP_OK) ESP_LOGW(TAG, "SNTP init: %s; history uses uptime", esp_err_to_name(err));
+    }
     esp_netif_config_t nc = ESP_NETIF_DEFAULT_ETH();
     ethernet = esp_netif_new(&nc);
     configASSERT(ethernet);
@@ -366,7 +433,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_LOST_IP, network_event, NULL));
     configASSERT(xTaskCreate(poll_task, "ats_modbus", 8192, NULL, 4, NULL) == pdPASS);
     configASSERT(xTaskCreate(bacnet_task, "ats_bacnet", 12288, NULL, 5, NULL) == pdPASS);
-    gateway_web_start(&settings, &custom_map, config_error, status_json, points_json);
+    gateway_web_start(&settings, &custom_map, config_error, status_json, points_json, errors_json);
 #if CONFIG_GW_OTA_ENABLED
     xSemaphoreTake(lock, portMAX_DELAY);
     web_started = true;

@@ -36,6 +36,10 @@ const rawPoints = [
   {name:attack,object_type:40,instance:2001,modbus_offset:251,quality:'communication-failure',quality_reason:attack,value:attack}
 ];
 let config = structuredClone(initialConfig), map = goodCsv, offline = false, rejectSave = false;
+let historyOffline = false;
+const emptyHistory = {capacity:32,count:0,total_errors:0,overwritten:0,boot_id:12,clock_synchronized:false,pending_persistence:false,persistence_error:'',events:[]};
+let history = structuredClone(emptyHistory);
+const errorEvent = {sequence:47,boot_id:11,uptime_ms:120045,utc_ms:1790251200000,host:'192.0.2.81',port:502,unit:41,function:3,offset:9998,quantity:1,transaction_id:99,config_revision:7,profile:'mpac1500_full',phase:'identity',error:'timeout',error_code:4,exception_code:0,system_error:0,elapsed_ms:1200};
 const requests = [], posts = [];
 const server = createServer(async (req,res) => {
   requests.push({method:req.method,url:req.url,authorization:req.headers.authorization});
@@ -75,6 +79,7 @@ const server = createServer(async (req,res) => {
       good_points:1,fault_points:2,point_count:3
     });return;
   }
+  if (req.url === '/api/errors') {send(historyOffline ? 503 : 200,historyOffline ? {error:'History temporarily unavailable'} : history);return;}
   if (req.url === '/api/points') {send(200,rawPoints);return;}
   if (req.url === '/api/map.csv' || req.url === '/api/template.csv') {res.writeHead(200,{'Content-Type':'text/csv'});res.end(map);return;}
   send(404,{error:'Unknown mock endpoint'});
@@ -109,6 +114,62 @@ try {
     assert.ok((await text('pointsBody')).includes(attack));
     assert.equal(await page.locator('#profile').inputValue(),'mpac1500_full');
     await page.screenshot({path:resolve(output,'desktop-overview.png'),fullPage:true});
+  });
+  await check('empty history explains bounded retention and unsynchronized clock',async()=>{
+    await page.locator('#errorsTab').click();
+    await waitFor(async()=>(await text('errorsLiveBadge'))==='Updating every 5 s','History did not load');
+    assert.equal(await page.locator('#errorsBody tr').count(),0);
+    assert.equal(await page.locator('#errorsEmpty').isVisible(),true);
+    assert.ok((await text('errorsClock')).includes('Clock not synchronized'));
+    assert.ok((await text('errorsPane')).includes('30 seconds'));
+    assert.equal(await enabled('downloadErrorsButton'),true);
+  });
+  await check('history shows UTC, original boot/uptime and full request details safely',async()=>{
+    history={...emptyHistory,count:2,total_errors:48,overwritten:16,clock_synchronized:true,pending_persistence:true,events:[{...errorEvent,sequence:48,boot_id:12,utc_ms:null,error:attack,profile:attack,phase:attack},errorEvent]};
+    await page.locator('#refreshButton').click();await waitFor(()=>enabled('refreshButton'),'History refresh did not finish');
+    assert.equal(await page.locator('#errorsBody tr').count(),2);
+    const first=await page.locator('#errorsBody tr').first().textContent();
+    assert.ok(first.includes('UTC unavailable'));
+    assert.ok(first.includes('#48 · Boot 12 · uptime 120045 ms'));
+    assert.ok(first.includes('192.0.2.81:502 · unit 41'));
+    assert.ok(first.includes('FC3 · offset 9998 · quantity 1 · transaction 99'));
+    assert.ok(first.includes('Revision 7'));
+    assert.ok(first.includes(attack));
+    assert.equal(await page.locator('#errorsBody img').count(),0);
+    assert.equal(await page.evaluate(()=>window.__xss),undefined);
+    assert.ok((await page.locator('#errorsBody tr').last().textContent()).includes(new Date(errorEvent.utc_ms).toISOString().replace('T',' ').replace('Z',' UTC')));
+    assert.ok((await text('errorsSummary')).includes('16 overwritten'));
+    assert.ok((await text('errorsStorage')).includes('waiting to be saved'));
+    await page.screenshot({path:resolve(output,'desktop-errors.png'),fullPage:true});
+  });
+  await check('history JSON download preserves the received snapshot and unknown UTC',async()=>{
+    const pending=page.waitForEvent('download');await page.locator('#downloadErrorsButton').click();
+    const download=await pending;
+    assert.ok(download.suggestedFilename().startsWith('modbus-errors-'));
+    const exported=JSON.parse(await readFile(await download.path(),'utf8'));
+    assert.deepEqual(exported,history);
+    assert.equal(exported.events[0].utc_ms,null);
+  });
+  await check('history-only outage retains records and does not pause points or overview',async()=>{
+    historyOffline=true;await page.locator('#refreshButton').click();await waitFor(()=>enabled('refreshButton'),'Failed-history refresh did not finish');
+    assert.equal(await text('connectionLabel'),'Connected');
+    assert.equal(await text('pointsLiveBadge'),'Updating every 5 s');
+    assert.equal(await text('errorsLiveBadge'),'History stale');
+    assert.equal(await page.locator('#errorsBody tr').count(),2);
+    assert.ok((await text('errorsMessage')).includes('last received snapshot'));
+    historyOffline=false;await page.locator('#refreshButton').click();await waitFor(()=>enabled('refreshButton'),'History did not recover');
+    assert.equal(await text('errorsLiveBadge'),'Updating every 5 s');
+    assert.equal(await page.locator('#errorsMessage').isHidden(),true);
+  });
+  await check('history storage errors remain visible and mobile Errors tab fits',async()=>{
+    history.persistence_error=attack;await page.locator('#refreshButton').click();await waitFor(()=>enabled('refreshButton'),'Storage-error refresh missing');
+    assert.ok((await text('errorsStorage')).includes('History storage error: '+attack));
+    assert.equal(await page.locator('#errorsStorage img').count(),0);
+    await page.setViewportSize({width:390,height:844});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth <= window.innerWidth),true);
+    await page.screenshot({path:resolve(output,'mobile-errors.png'),fullPage:true});
+    await page.setViewportSize({width:1365,height:1000});
+    history.persistence_error='';
   });
   await check('search and quality/type filters select actual points',async()=>{
     await page.locator('#pointsTab').click();

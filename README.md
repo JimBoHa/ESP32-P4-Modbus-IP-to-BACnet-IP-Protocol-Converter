@@ -1,6 +1,6 @@
 # ESP32-P4 Modbus IP to BACnet IP Protocol Converter
 
-Version **0.3.0** converts read-only Modbus TCP points into discoverable
+Version **0.4.0** converts read-only Modbus TCP points into discoverable
 BACnet/IP objects on the **Waveshare ESP32-P4-POE-ETH**. Its web interface lets
 you select a built-in Kohler MPAC 1500 ATS profile or upload your own CSV point
 map, set the Modbus target and BACnet identity, and save the configuration to
@@ -90,6 +90,17 @@ admin bearer token for configuration changes and CSV validation, and redirects
 HTTP to HTTPS. It supports application-only migration from the documented
 existing dual-slot updater. Anonymous diagnostic reads remain available.
 Field-device and BACnet point writes remain disabled in both builds.
+
+The **Errors** tab and `/api/errors` retain the latest 32 failed Modbus
+transactions with their target, function, zero-based register range, error,
+exception/socket details, transaction ID, configuration revision and completion
+time. UTC is recorded after SNTP synchronization; earlier errors retain their
+boot ID and uptime without inventing a calendar date. Successful reads do not
+clear history. A background task saves history to flash at most once per
+30 seconds; a sudden restart can lose entries not yet saved. The page shows
+pending saves and storage errors. BACnet object identifiers are unchanged.
+See [error history and clock setup](docs/WEB_CONFIGURATION.md) for retention
+limits and clock configuration.
 
 ## Build and configuration
 

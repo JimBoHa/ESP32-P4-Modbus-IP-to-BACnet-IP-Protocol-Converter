@@ -1,7 +1,7 @@
 set(gateway_sources
     "app_main.c" "gateway_poll.c" "modbus_tcp.c" "ats_model.c"
     "gateway_bacnet.c" "bip_port.c" "custom_map.c" "gateway_config.c"
-    "gateway_web.c" "gateway_storage.c")
+    "gateway_web.c" "gateway_storage.c" "error_history.c")
 set(gateway_dependencies bacnet_stack esp_eth esp_netif esp_event esp_timer
     esp_http_server nvs_flash json lwip esp_app_format esp_partition spi_flash
     app_update bootloader_support esp_https_server esp_system mbedtls)

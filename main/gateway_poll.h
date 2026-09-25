@@ -23,8 +23,12 @@ typedef struct {
     uint32_t consecutive_failures;
     uint16_t transaction_id;
     uint16_t last_offset;
+    uint16_t last_quantity;
     uint8_t profile_stage;
     bool profile_valid;
+    /* Metadata for the last actual request, retained across no-op steps.
+     * last_checking describes the request before failures reset profile state. */
+    bool last_checking;
     mb_result_t last_result;
     const char *profile_status;
 } gateway_poll_t;

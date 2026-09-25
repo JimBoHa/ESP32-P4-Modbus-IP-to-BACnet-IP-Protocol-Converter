@@ -366,6 +366,8 @@ bool custom_poll_step(custom_poll_t *s, const custom_map_t *map,
     const custom_point_t *p = &map->points[point];
     uint16_t words[MB_MAX_REGISTERS];
     s->last_offset = d->offset;
+    s->last_quantity = d->word_count;
+    s->last_function = p->function;
     ++s->requests;
     mb_error_t error = mb_read_points(host, port, unit, p->function, d->offset,
         d->word_count, ++s->transaction_id, 1200, words, &s->last_result);

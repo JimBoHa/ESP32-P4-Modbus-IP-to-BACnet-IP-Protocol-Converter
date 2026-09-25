@@ -8,5 +8,5 @@ void gateway_web_load(gateway_config_t *config, custom_map_t *map,
                       char *error, size_t error_size);
 void gateway_web_start(const gateway_config_t *config, const custom_map_t *map,
                        const char *config_error, cJSON *(*status)(void),
-                       cJSON *(*points)(void));
+                       cJSON *(*points)(void), cJSON *(*errors)(void));
 #endif

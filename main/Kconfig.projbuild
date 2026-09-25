@@ -54,6 +54,14 @@ menu "ATS Modbus to BACnet gateway"
     config GW_ROUTER
         string "Static IPv4 default gateway"
         default "0.0.0.0"
+    config GW_NTP_SERVER
+        string "SNTP server for diagnostic UTC timestamps (empty disables)"
+        default "162.159.200.1"
+        help
+            Cloudflare's public NTP IPv4 endpoint works without DNS, including
+            static-IP installations. Set a local server for isolated networks.
+            Uses UDP 123. Polling and BACnet do not wait for clock synchronization;
+            errors before the first successful sync retain boot ID and uptime.
     config GW_OTA_ENABLED
         bool "Signed HTTPS OTA and authenticated HTTPS configuration"
         default n

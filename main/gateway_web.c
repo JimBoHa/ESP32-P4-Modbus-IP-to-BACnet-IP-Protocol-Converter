@@ -21,7 +21,7 @@ static const char *TAG = "gateway_web";
 static const gateway_config_t *active;
 static const custom_map_t *saved_map;
 static const char *boot_error;
-static cJSON *(*status_json)(void), *(*points_json)(void);
+static cJSON *(*status_json)(void), *(*points_json)(void), *(*errors_json)(void);
 static bool restart_pending;
 static esp_timer_handle_t restart_timer;
 extern const unsigned char index_start[] asm("_binary_index_html_start");
@@ -125,6 +125,7 @@ static esp_err_t profiles_handler(httpd_req_t *r)
 
 static esp_err_t status_handler(httpd_req_t *r) { return json_reply(r, status_json()); }
 static esp_err_t points_handler(httpd_req_t *r) { return json_reply(r, points_json()); }
+static esp_err_t errors_handler(httpd_req_t *r) { return json_reply(r, errors_json()); }
 
 static esp_err_t csv_handler(httpd_req_t *r)
 {
@@ -267,6 +268,7 @@ static esp_err_t register_web(httpd_handle_t http)
         {.uri="/api/profiles", .method=HTTP_GET, .handler=profiles_handler},
         {.uri="/api/status", .method=HTTP_GET, .handler=status_handler},
         {.uri="/api/points", .method=HTTP_GET, .handler=points_handler},
+        {.uri="/api/errors", .method=HTTP_GET, .handler=errors_handler},
         {.uri="/api/map.csv", .method=HTTP_GET, .handler=csv_handler},
         {.uri="/api/template.csv", .method=HTTP_GET, .handler=csv_handler},
         {.uri="/api/validate", .method=HTTP_POST, .handler=validate_handler},
@@ -280,9 +282,11 @@ static esp_err_t register_web(httpd_handle_t http)
 }
 
 void gateway_web_start(const gateway_config_t *c, const custom_map_t *map,
-                       const char *error, cJSON *(*status)(void), cJSON *(*points)(void))
+                       const char *error, cJSON *(*status)(void), cJSON *(*points)(void),
+                       cJSON *(*errors)(void))
 {
     active = c; saved_map = map; boot_error = error; status_json = status; points_json = points;
+    errors_json = errors;
     esp_timer_create_args_t timer = {.callback = restart_callback, .name = "config_restart"};
     ESP_ERROR_CHECK(esp_timer_create(&timer, &restart_timer));
 #if CONFIG_GW_OTA_ENABLED

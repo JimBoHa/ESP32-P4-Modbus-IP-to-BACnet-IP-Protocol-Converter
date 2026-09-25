@@ -59,6 +59,8 @@ bool gateway_poll_step(gateway_poll_t *s, const gateway_poll_config_t *c, uint64
         count = ats_scan_blocks[block].count;
     }
     s->last_offset = offset;
+    s->last_quantity = count;
+    s->last_checking = checking;
     ++s->requests;
     mb_error_t error = mb_read_holding(c->host, c->port, c->unit, offset, count,
         ++s->transaction_id, 1200, words, &s->last_result);

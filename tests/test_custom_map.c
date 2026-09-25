@@ -23,6 +23,8 @@ mb_error_t mb_read_points(const char *host, uint16_t port, uint8_t unit,
     assert(!strcmp(host, "192.0.2.1") && port == 502 && unit == 17);
     assert(function == expected_fc && offset == expected_address && qty == expected_count);
     assert(tid && timeout_ms == 1200);
+    assert(poll_state.last_function == function && poll_state.last_offset == offset);
+    assert(poll_state.last_quantity == qty && poll_state.transaction_id == tid);
     ++calls;
     memset(result, 0, sizeof(*result));
     result->elapsed_ms = 8;
@@ -158,16 +160,20 @@ static void test_polling(void)
     expected_fc = 4; expected_address = 10; expected_count = 1; fake_words[0] = 4900;
     assert(custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17, 1000));
     assert(poll_state.requests == 1 && poll_state.successes == 1 && calls == 1);
+    assert(poll_state.failures == 0 && poll_state.last_function == 4 && poll_state.last_offset == 10);
     assert(poll_state.next_request_ms == 1258);
     assert(!custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17, 1257));
     expected_fc = 2; expected_address = 3; fake_words[0] = 1;
     assert(custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17, 1258));
+    assert(poll_state.failures == 0 && poll_state.last_function == 2 && poll_state.last_offset == 3);
     custom_poll_snapshot(&poll_state, &map, 1300, values);
     assert(values[0].numeric == 490 && values[1].numeric == 1);
     assert(values[0].quality == ATS_QUALITY_GOOD && values[1].quality == ATS_QUALITY_GOOD);
     assert(!custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17, 1600));
     expected_fc = 4; expected_address = 10; fake_error = MB_ERR_EXCEPTION;
     assert(custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17, 2100));
+    assert(poll_state.failures == 1 && poll_state.last_function == 4 && poll_state.last_offset == 10);
+    assert(poll_state.last_quantity == 1 && poll_state.last_result.exception_code == 2);
     custom_poll_snapshot(&poll_state, &map, 2110, values);
     assert(values[0].quality == ATS_QUALITY_COMM && values[0].numeric == 490);
     assert(values[1].quality == ATS_QUALITY_GOOD);
@@ -175,14 +181,62 @@ static void test_polling(void)
     expected_fc = 2; expected_address = 3; fake_error = MB_ERR_TIMEOUT;
     assert(custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17, 7108));
     assert(poll_state.next_request_ms == 17116 && poll_state.failures == 2);
+    assert(poll_state.last_function == 2 && poll_state.last_offset == 3 && poll_state.last_quantity == 1);
+    assert(poll_state.last_result.error == MB_ERR_TIMEOUT);
     assert(poll_state.values[0].quality == ATS_QUALITY_COMM && poll_state.values[1].quality == ATS_QUALITY_COMM);
     expected_fc = 4; expected_address = 10; fake_error = MB_OK; fake_words[0] = 4910;
     assert(custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17, 17116));
     assert(poll_state.consecutive_failures == 0 && poll_state.values[0].numeric == 491);
+    assert(poll_state.failures == 2 && poll_state.last_function == 4 && poll_state.last_offset == 10);
     custom_poll_snapshot(&poll_state, &map, 24000, values);
     assert(values[0].quality == ATS_QUALITY_COMM && values[0].numeric == 491);
     custom_poll_offline(&poll_state, &map, 24000);
     assert(poll_state.values[0].quality == ATS_QUALITY_COMM && poll_state.values[0].numeric == 491);
+}
+
+static void test_failure_metadata(void)
+{
+    const char *rows[] = {
+        "1,Coil,BI,1,3,bool,,1,0,95,,,,1000,\n",
+        "1,Input,BI,2,7,bool,,1,0,95,,,,1000,\n",
+        "1,Holding,AI,3,11,u32,ABCD,1,0,95,,,,1000,\n",
+        "1,Name,CSV,4,15,ascii,AB,1,0,95,,,8,1000,\n",
+    };
+    const uint16_t addresses[] = {3,7,11,15};
+    const uint16_t quantities[] = {1,1,2,4};
+    const mb_error_t failures[] = {MB_ERR_CONNECT,MB_ERR_TRANSACTION,MB_ERR_EXCEPTION};
+    for (size_t f=0;f<sizeof(rows)/sizeof(rows[0]);++f) {
+        assert(parse_rows(rows[f]));
+        expected_fc = (uint8_t)(f+1);
+        expected_address = addresses[f];
+        expected_count = quantities[f];
+        for (size_t e=0;e<sizeof(failures)/sizeof(failures[0]);++e) {
+            custom_poll_init(&poll_state, &map);
+            fake_error = failures[e];
+            assert(custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17, 1000));
+            assert(poll_state.requests == 1 && poll_state.successes == 0 && poll_state.failures == 1);
+            assert(poll_state.last_function == expected_fc && poll_state.last_offset == expected_address);
+            assert(poll_state.last_quantity == expected_count && poll_state.transaction_id == 1);
+            assert(poll_state.last_result.error == failures[e] && poll_state.last_result.elapsed_ms == 8);
+            /* Backoff calls must preserve the failed request for diagnostics. */
+            assert(!custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17,
+                                     poll_state.next_request_ms-1));
+            assert(poll_state.requests == 1 && poll_state.last_result.error == failures[e]);
+            assert(poll_state.last_function == expected_fc && poll_state.last_quantity == expected_count);
+            fake_error = MB_OK;
+            memset(fake_words, 0, sizeof(fake_words));
+            if (f==3) {
+                fake_words[0]=0x4142; fake_words[1]=0x4344;
+                fake_words[2]=0x4546; fake_words[3]=0x4748;
+            }
+            assert(custom_poll_step(&poll_state, &map, "192.0.2.1", 502, 17,
+                                    poll_state.next_request_ms));
+            assert(poll_state.requests == 2 && poll_state.successes == 1 && poll_state.failures == 1);
+            assert(poll_state.last_result.error == MB_OK && poll_state.transaction_id == 2);
+            assert(poll_state.last_function == expected_fc && poll_state.last_offset == expected_address);
+            assert(poll_state.last_quantity == expected_count);
+        }
+    }
 }
 
 static void test_full_map_cadence(void)
@@ -216,7 +270,7 @@ static void test_full_map_cadence(void)
 
 int main(void)
 {
-    test_parser(); test_decoding(); test_polling(); test_full_map_cadence();
-    puts("Custom map parser, decoder and polling tests passed");
+    test_parser(); test_decoding(); test_polling(); test_failure_metadata(); test_full_map_cadence();
+    puts("Custom map parser, decoder, polling and failure metadata tests passed");
     return 0;
 }

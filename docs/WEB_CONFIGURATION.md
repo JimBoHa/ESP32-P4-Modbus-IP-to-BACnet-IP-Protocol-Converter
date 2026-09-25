@@ -2,7 +2,7 @@
 
 Open the gateway’s HTTPS address in a browser for builds with signed Ethernet
 updates. Generic builds without that feature may serve HTTP instead. The console is self-contained: it
-uses no external scripts, fonts, analytics, or CDN. Overview and Live points
+uses no external scripts, fonts, analytics, or CDN. Overview, Live points, and Errors
 refresh every five seconds. A lost connection leaves the last received values
 visible, marks updates paused, and retries with a bounded delay. The point’s
 reported quality and reason remain visible separately from browser connectivity.
@@ -20,10 +20,47 @@ configuration or CSV, and the page never puts it in browser storage, cookies,
 a URL, or displayed text. **Forget key**, reloading, or leaving the page clears
 it; a successful gateway restart within this open page retains it.
 
-Status, points, profile lists, and configuration reads remain available without
+Status, points, error history, profile lists, and configuration reads remain available without
 a key. Builds reporting `authentication_required:false` omit the key panel and
 authorization header. `X-Gateway-Request: 1` remains required on mutations in
 both modes; it does not replace administrator authentication.
+
+## Error history
+
+The **Errors** tab retains the newest 32 failed Modbus requests, newest first.
+Successful reads do not clear it. Each event identifies the source host, port,
+unit, function, zero-based wire offset, quantity, transaction ID, configuration
+revision, profile, acquisition phase, and failure details. The Modbus exception
+code, socket system error number, and elapsed milliseconds distinguish a
+controller exception from a connection, timeout, or malformed-response failure.
+The expected old-map identity exception is not a failed request.
+
+Events always include their original boot ID and uptime in milliseconds. UTC is
+recorded only after the gateway synchronizes its clock; earlier events retain
+`utc_ms:null`, displayed as **UTC unavailable**. A later clock synchronization
+does not invent timestamps for those events. Event sequence orders the history
+even if the clock changes.
+
+`CONFIG_GW_NTP_SERVER` selects the SNTP server at build time (menuconfig).
+It defaults to Cloudflare's documented `162.159.200.1`, using UDP port 123;
+the numeric address also works on static-IP networks without DNS. An empty
+value disables time synchronization. `clock_synchronized` means at least one
+successful synchronization during the current boot; afterward the gateway
+keeps time locally between updates. It does not assert current server reachability.
+See [Cloudflare's NTP instructions](https://developers.cloudflare.com/time-services/ntp/usage/).
+
+History saves run asynchronously at most every 30 seconds. Saved records survive
+restarts; a sudden restart can lose unflushed changes. Pending changes and storage
+errors appear in the tab. The total and overwritten counters describe this
+history, including saved prior boots; the Overview request counters describe the
+current boot. Firmware installed before this feature cannot supply past details.
+
+**Download JSON snapshot** exports the most recently received history, also
+available at read-only `GET /api/errors`. If that endpoint fails, the tab marks
+its retained snapshot stale while Overview and Live points keep updating when
+their endpoints work. The download retains the same snapshot until a refresh
+succeeds. There is no clear-history endpoint, and this feature does not change
+the BACnet point catalog.
 
 ## Profiles and connections
 

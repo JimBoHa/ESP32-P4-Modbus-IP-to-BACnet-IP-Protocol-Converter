@@ -1,5 +1,23 @@
 # Validation record
 
+## Version 0.4.0: persistent Modbus error history, 2026-09-24
+
+- Twelve native test executables and twelve TCP loopback tests pass with
+  ASan/UBSan. Eight focused history scenarios cover ring replacement and reboot
+  reload, unknown UTC, concurrent events during a save, the 30-second write
+  limit, write failures/recovery, corrupt/incompatible storage preservation,
+  unavailable storage/worker, and failure of each JSON allocation.
+- Poller regressions verify exact request metadata for ATS and custom FC01–04
+  errors. The expected old-map identity exception remains excluded from both
+  the failure counter and retained history.
+- Twenty-one Chromium scenarios pass, including empty and retained history,
+  unknown UTC, storage errors, a stale diagnostics endpoint without blocking
+  point updates, safe rendering of strings, and JSON downloads. Native HTTP
+  and HTTPS harnesses exercise the new anonymous read-only route.
+- Source review checked the history mutex, snapshot generation during flash
+  writes, SNTP initialization, and configuration restoration across a lost
+  HTTP response in the opt-in physical test.
+
 ## Version 0.3.0: optional signed HTTPS updates, 2026-09-22
 
 - ESP-IDF 5.5.4 signed OTA and default factory ESP32-P4 target builds pass.
@@ -196,3 +214,28 @@ The bounded native live-path test is opt-in and contacts the specified ATS:
 The output directory must be new. Ports 47819–47821 must be free on loopback.
 Fault injection affects only that test's proxy; it does not interrupt other
 clients. Do not run it concurrently with another copy of this test.
+
+The physical error-history test requires a signed-HTTPS gateway already using
+an ATS preset, a synchronized clock, and a reachable test computer. It saves
+the original settings, temporarily points the gateway at a local read-only
+proxy, and restarts it. One response receives an incorrect transaction ID;
+the source receives only ordinary reads. It checks the recorded error,
+successful-read retention and flash save, restores the original target, then
+checks retention after the restoration reboot. Gateway readings can briefly
+fault during this test. BACnet object identifiers are not changed.
+
+```sh
+python3 tools/test_device_error_history.py \
+  --host GATEWAY_IP --cert main/ota_server_cert.pem \
+  --token-file /private/path/ota_token.txt \
+  --proxy-bind TEST_COMPUTER_IP --proxy-port 15020 \
+  --output private/new-error-history-test
+```
+
+Use a new output directory. TCP 15020 must be reachable from the gateway.
+The proxy accepts only that gateway's IPv4 address and forwards FC03 reads
+to its existing source. Cleanup retries configuration saves across a pending
+restart, including a lost save response. If the test computer itself stops,
+use `original-config.json` in the output directory to restore the source
+through the gateway web interface. Reports contain site addresses and raw
+responses; keep them private. This test does not establish power-loss behavior.
