@@ -26,6 +26,11 @@ restored afterward and standard-port broadcast discovery passed. Metasys UI
 commissioning, power-loss/cable-pull testing and a 24-hour soak remain pending.
 See [validation](docs/VALIDATION.md) for the exact evidence and limits.
 
+Version 0.4.0 also passed signed Ethernet deployment on that board. A controlled
+proxy fault verified exact error details, synchronized UTC, recovery and
+retention after a saved-history reboot. The original ATS settings were restored
+and the same 172 BACnet objects remained discoverable.
+
 ## Connections
 
 ```text

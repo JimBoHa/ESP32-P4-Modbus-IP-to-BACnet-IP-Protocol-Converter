@@ -18,6 +18,44 @@
   writes, SNTP initialization, and configuration restoration across a lost
   HTTP response in the opt-in physical test.
 
+### Physical deployment and retained-error test
+
+Both the default factory and signed HTTPS ESP32-P4 builds pass. The signed
+0.4.0 image from source `ad43a54ee1b7` was installed over Ethernet and verified
+in **ota_1, VALID**, preserving 0.3.0 in ota_0. The signed file is **987,136
+bytes**, with SHA-256
+`47199475e0bab330115ccdb650ffef5b9daeec91e3d2526d9aef5cec23605113`;
+the ESP application-image digest is
+`aae37a9a80cb0c2cc424ccef419736e80fdc71e5fdde93b97604141f091bc130`.
+
+- The actual gateway made 41 FC03 reads through a temporary local proxy. One
+  response had its transaction ID deliberately changed after the real ATS
+  replied. The gateway retained exactly one `MB_ERR_TRANSACTION` event with
+  the correct function, unit, offset **249**, quantity **4**, transaction
+  **11**, target, configuration revision, completion uptime and synchronized
+  UTC timestamp. No source-device writes or settings changes occurred.
+- Subsequent successful reads did not clear the record. The background save
+  completed, the original gateway source settings were restored, and the
+  restoration reboot retained the exact event under its original boot ID.
+  The current boot ID advanced. This verifies a commanded restart after a
+  completed save; it does not test interrupted flash writes or power loss.
+- Final configuration revision **6** restores the full ATS profile, original
+  target/unit/BACnet identity and empty custom map. At the final snapshot,
+  **81 reads succeeded with zero new failures**. There were 144 good points
+  and the same 20 unverified/inapplicable points as before the update.
+- An independent BACpypes3 client discovered the same **172 unique objects**
+  and read operational device status, revision and live point properties.
+  Phase-to-phase voltages were **492 / 490 / 490.5 V** and frequency **59.9 Hz**
+  with no-fault-detected reliability. These are protocol readings, not a
+  contemporaneous manual display comparison.
+- Chromium loaded the physical HTTPS Errors tab, displayed the retained UTC
+  event, and downloaded its JSON snapshot. Desktop/mobile screenshots were
+  inspected and no JavaScript errors occurred. Raw evidence remains private.
+
+The single retained history entry is the deliberate proxy test, not an
+unexplained ATS failure. Earlier aggregate failures cannot be reconstructed
+because the prior firmware did not retain their request details.
+
 ## Version 0.3.0: optional signed HTTPS updates, 2026-09-22
 
 - ESP-IDF 5.5.4 signed OTA and default factory ESP32-P4 target builds pass.
